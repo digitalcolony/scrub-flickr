@@ -28,10 +28,29 @@ export class FlickrPhotoService {
 	 */
 	async getUserPhotos(options = {}) {
 		try {
-			const { userId, accessToken, accessTokenSecret, page = 1, perPage = 50, sort = "date-posted-desc" } = options;
+			const {
+				userId,
+				accessToken,
+				accessTokenSecret,
+				page = 1,
+				perPage = 50,
+				sort = "date-posted-desc",
+			} = options;
+
+			console.log("🔍 [PHOTO DEBUG] getUserPhotos called with:", {
+				userId,
+				hasAccessToken: !!accessToken,
+				hasAccessTokenSecret: !!accessTokenSecret,
+				accessTokenType: typeof accessToken,
+				accessTokenPrefix: accessToken?.substring(0, 10) + "...",
+				page,
+				perPage,
+				isDev: import.meta.env.DEV,
+			});
 
 			// DEV MODE: Return mock photos for testing
 			if (import.meta.env.DEV && (!accessToken || accessToken.startsWith("mock_"))) {
+				console.log("🔄 [PHOTO DEBUG] Using mock photos (dev mode)");
 				return this.generateMockPhotos({ page, perPage });
 			}
 
@@ -121,8 +140,15 @@ export class FlickrPhotoService {
 		const photos = flickrPhotos.photo.map((photo) => ({
 			id: photo.id,
 			title: photo.title || `Untitled Photo ${photo.id}`,
-			url: photo.url_o || photo.url_l || photo.url_z || photo.url_m || `https://live.staticflickr.com/${photo.server}/${photo.id}_${photo.secret}_b.jpg`,
-			thumbnailUrl: photo.url_m || `https://live.staticflickr.com/${photo.server}/${photo.id}_${photo.secret}_m.jpg`,
+			url:
+				photo.url_o ||
+				photo.url_l ||
+				photo.url_z ||
+				photo.url_m ||
+				`https://live.staticflickr.com/${photo.server}/${photo.id}_${photo.secret}_b.jpg`,
+			thumbnailUrl:
+				photo.url_m ||
+				`https://live.staticflickr.com/${photo.server}/${photo.id}_${photo.secret}_m.jpg`,
 			dateUploaded: parseInt(photo.dateupload) * 1000, // Convert to milliseconds
 			dateTaken: photo.datetaken ? new Date(photo.datetaken).getTime() : null,
 			tags: photo.tags ? photo.tags.split(" ").filter(Boolean) : [],
@@ -134,8 +160,8 @@ export class FlickrPhotoService {
 			_flickrData: {
 				server: photo.server,
 				secret: photo.secret,
-				farm: photo.farm
-			}
+				farm: photo.farm,
+			},
 		}));
 
 		return {

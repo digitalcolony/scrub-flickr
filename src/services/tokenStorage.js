@@ -15,12 +15,17 @@ export class TokenStorageService {
 	 */
 	storeToken(token, user) {
 		try {
+			// Normalize token secret key: accept either token.accessTokenSecret or token.tokenSecret
+			const normalizedSecret = token.accessTokenSecret || token.tokenSecret || null;
+
 			const authData = {
 				version: this.version,
 				timestamp: Date.now(),
 				token: {
 					accessToken: token.accessToken,
-					tokenSecret: token.tokenSecret,
+					// Store both keys for backward/forward compatibility
+					accessTokenSecret: normalizedSecret,
+					tokenSecret: normalizedSecret,
 					permissions: token.permissions,
 					issuedAt: token.issuedAt || Date.now(),
 					expiresAt: token.expiresAt || null,
@@ -62,6 +67,17 @@ export class TokenStorageService {
 			if (!this.isValidAuthData(authData)) {
 				this.clearToken();
 				return { token: null, user: null };
+			}
+
+			// Backfill secret key if older records used tokenSecret only
+			if (authData.token && !authData.token.accessTokenSecret && authData.token.tokenSecret) {
+				authData.token.accessTokenSecret = authData.token.tokenSecret;
+				// Persist the backfill to keep future reads consistent
+				try {
+					localStorage.setItem(this.storageKey, JSON.stringify(authData));
+				} catch {
+					// Non-fatal if we can't write back
+				}
 			}
 
 			// Check token expiration

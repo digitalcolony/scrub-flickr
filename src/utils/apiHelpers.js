@@ -222,7 +222,7 @@ export function validateCallbackParams(params) {
 		hasAuthCode: !!(params.code || params.oauth_token),
 		hasError: !!params.error,
 		isOAuth1: !!params.oauth_token,
-		isOAuth2: !!params.code
+		isOAuth2: !!params.code,
 	};
 }
 

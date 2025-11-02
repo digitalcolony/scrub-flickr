@@ -6,8 +6,8 @@ export class RateLimiter {
 	constructor() {
 		this.requests = [];
 		this.maxRequestsPerHour = 3600;
-		this.storageKey = 'flickr_api_rate_limit';
-		
+		this.storageKey = "flickr_api_rate_limit";
+
 		// Load existing request history from localStorage
 		this.loadRequestHistory();
 	}
@@ -21,11 +21,11 @@ export class RateLimiter {
 			if (stored) {
 				const data = JSON.parse(stored);
 				// Filter to only include requests from the last hour
-				const oneHourAgo = Date.now() - (60 * 60 * 1000);
-				this.requests = data.filter(timestamp => timestamp > oneHourAgo);
+				const oneHourAgo = Date.now() - 60 * 60 * 1000;
+				this.requests = data.filter((timestamp) => timestamp > oneHourAgo);
 			}
 		} catch (error) {
-			console.warn('RateLimiter: Error loading request history:', error);
+			console.warn("RateLimiter: Error loading request history:", error);
 			this.requests = [];
 		}
 	}
@@ -37,7 +37,7 @@ export class RateLimiter {
 		try {
 			localStorage.setItem(this.storageKey, JSON.stringify(this.requests));
 		} catch (error) {
-			console.warn('RateLimiter: Error saving request history:', error);
+			console.warn("RateLimiter: Error saving request history:", error);
 		}
 	}
 
@@ -45,8 +45,8 @@ export class RateLimiter {
 	 * Clean up old requests (older than 1 hour)
 	 */
 	cleanupOldRequests() {
-		const oneHourAgo = Date.now() - (60 * 60 * 1000);
-		this.requests = this.requests.filter(timestamp => timestamp > oneHourAgo);
+		const oneHourAgo = Date.now() - 60 * 60 * 1000;
+		this.requests = this.requests.filter((timestamp) => timestamp > oneHourAgo);
 		this.saveRequestHistory();
 	}
 
@@ -86,14 +86,14 @@ export class RateLimiter {
 		}
 
 		this.cleanupOldRequests();
-		
+
 		if (this.requests.length < this.maxRequestsPerHour) {
 			return 0;
 		}
 
 		// Find the oldest request and calculate when it will be outside the hour window
 		const oldestRequest = Math.min(...this.requests);
-		const oneHourFromOldest = oldestRequest + (60 * 60 * 1000);
+		const oneHourFromOldest = oldestRequest + 60 * 60 * 1000;
 		return Math.max(0, oneHourFromOldest - Date.now());
 	}
 
@@ -104,17 +104,19 @@ export class RateLimiter {
 	getFormattedTimeUntilReset() {
 		const ms = this.getTimeUntilReset();
 		if (ms === 0) {
-			return 'Available now';
+			return "Available now";
 		}
 
 		const minutes = Math.ceil(ms / (60 * 1000));
 		if (minutes < 60) {
-			return `${minutes} minute${minutes > 1 ? 's' : ''}`;
+			return `${minutes} minute${minutes > 1 ? "s" : ""}`;
 		}
 
 		const hours = Math.floor(minutes / 60);
 		const remainingMinutes = minutes % 60;
-		return `${hours} hour${hours > 1 ? 's' : ''}${remainingMinutes > 0 ? ` ${remainingMinutes} minute${remainingMinutes > 1 ? 's' : ''}` : ''}`;
+		return `${hours} hour${hours > 1 ? "s" : ""}${
+			remainingMinutes > 0 ? ` ${remainingMinutes} minute${remainingMinutes > 1 ? "s" : ""}` : ""
+		}`;
 	}
 
 	/**
@@ -134,7 +136,7 @@ export class RateLimiter {
 		const timeToWait = this.getTimeUntilReset();
 		if (timeToWait > 0) {
 			console.log(`RateLimiter: Waiting ${this.getFormattedTimeUntilReset()} for rate limit reset`);
-			await new Promise(resolve => setTimeout(resolve, timeToWait));
+			await new Promise((resolve) => setTimeout(resolve, timeToWait));
 		}
 	}
 
@@ -163,7 +165,7 @@ export class RateLimiter {
 			remainingRequests: this.getRemainingRequests(),
 			timeUntilReset: this.getTimeUntilReset(),
 			formattedTimeUntilReset: this.getFormattedTimeUntilReset(),
-			canMakeRequest: this.canMakeRequest()
+			canMakeRequest: this.canMakeRequest(),
 		};
 	}
 

@@ -2,7 +2,7 @@ import CryptoJS from "crypto-js";
 
 /**
  * FlickrApiClient handles OAuth 1.0a authentication and API requests to Flickr
- * Implements the complete OAuth flow and provides methods for API calls
+ * Uses server proxy to avoid CORS issues with OAuth 1.0a flow
  */
 export class FlickrApiClient {
 	constructor() {
@@ -10,7 +10,7 @@ export class FlickrApiClient {
 		this.apiSecret = import.meta.env.VITE_FLICKR_API_SECRET;
 		this.callbackUrl = import.meta.env.VITE_FLICKR_CALLBACK_URL;
 		this.baseUrl = "https://www.flickr.com/services/rest/";
-		this.authUrl = "https://www.flickr.com/services/oauth/";
+		this.serverUrl = "http://localhost:3001"; // OAuth proxy server
 
 		// Validate required environment variables
 		if (!this.apiKey || !this.apiSecret || !this.callbackUrl) {
@@ -82,59 +82,59 @@ export class FlickrApiClient {
 	}
 
 	/**
-	 * Get request token (step 1 of OAuth flow)
+	 * Get request token (step 1 of OAuth flow) via server proxy
 	 * @returns {Promise<Object>} Request token and secret
 	 */
 	async getRequestToken() {
-		const url = `${this.authUrl}request_token`;
-		const params = {
-			oauth_nonce: this.generateNonce(),
-			oauth_timestamp: this.getTimestamp(),
-			oauth_consumer_key: this.apiKey,
-			oauth_signature_method: "HMAC-SHA1",
-			oauth_version: "1.0",
-			oauth_callback: this.callbackUrl,
-		};
-
-		// Generate signature
-		params.oauth_signature = this.generateOAuthSignature("GET", url, params);
-
-		// Create authorization header
-		const authHeader =
-			"OAuth " +
-			Object.keys(params)
-				.map((key) => `${this.percentEncode(key)}="${this.percentEncode(params[key])}"`)
-				.join(", ");
+		console.log("🌐 [CLIENT] Requesting OAuth token via server proxy...");
 
 		try {
-			const response = await fetch(`${url}?${new URLSearchParams(params)}`, {
+			const response = await fetch(`${this.serverUrl}/auth/request-token`, {
 				method: "GET",
 				headers: {
-					Authorization: authHeader,
+					"Content-Type": "application/json",
 				},
 			});
 
 			if (!response.ok) {
-				throw new Error(`Request token failed: ${response.status} ${response.statusText}`);
+				const errorText = await response.text().catch(() => "Unable to read error response");
+				console.error("🚨 [ERROR] Server request failed:", {
+					status: response.status,
+					statusText: response.statusText,
+					body: errorText,
+				});
+				throw new Error(`Server request failed: ${response.status} ${response.statusText}`);
 			}
 
-			const responseText = await response.text();
-			const responseParams = new URLSearchParams(responseText);
+			const data = await response.json();
 
-			const requestToken = responseParams.get("oauth_token");
-			const requestTokenSecret = responseParams.get("oauth_token_secret");
-
-			if (!requestToken || !requestTokenSecret) {
-				throw new Error("Invalid request token response");
+			if (!data.success) {
+				console.error("🚨 [ERROR] Server returned error:", data.error);
+				throw new Error(data.error || "Unknown server error");
 			}
+
+			console.log("✅ [SUCCESS] Request token obtained via server:", {
+				token: data.oauth_token?.substring(0, 10) + "...",
+				hasSecret: !!data.oauth_token_secret,
+				authorizeUrl: data.authorize_url?.substring(0, 50) + "...",
+			});
 
 			return {
-				token: requestToken,
-				tokenSecret: requestTokenSecret,
+				token: data.oauth_token,
+				tokenSecret: data.oauth_token_secret,
+				authorizeUrl: data.authorize_url,
 			};
 		} catch (error) {
-			console.error("FlickrApiClient: Error getting request token:", error);
-			throw new Error(`Failed to get request token: ${error.message}`);
+			console.error("🚨 [ERROR] FlickrApiClient: Error getting request token:", error);
+
+			// Provide more specific error messages
+			if (error.name === "TypeError" && error.message.includes("fetch")) {
+				throw new Error(
+					`Unable to connect to OAuth server. Make sure the server is running on ${this.serverUrl}. (${error.message})`
+				);
+			} else {
+				throw new Error(`Failed to get request token: ${error.message}`);
+			}
 		}
 	}
 
@@ -154,74 +154,70 @@ export class FlickrApiClient {
 	}
 
 	/**
-	 * Exchange request token for access token (step 3 of OAuth flow)
+	 * Exchange request token for access token (step 3 of OAuth flow) via server proxy
 	 * @param {string} requestToken - Request token
 	 * @param {string} requestTokenSecret - Request token secret
 	 * @param {string} verifier - OAuth verifier from callback
 	 * @returns {Promise<Object>} Access token and secret
 	 */
 	async getAccessToken(requestToken, requestTokenSecret, verifier) {
-		const url = `${this.authUrl}access_token`;
-		const params = {
-			oauth_nonce: this.generateNonce(),
-			oauth_timestamp: this.getTimestamp(),
-			oauth_consumer_key: this.apiKey,
-			oauth_token: requestToken,
-			oauth_verifier: verifier,
-			oauth_signature_method: "HMAC-SHA1",
-			oauth_version: "1.0",
-		};
-
-		// Generate signature with request token secret
-		params.oauth_signature = this.generateOAuthSignature("GET", url, params, requestTokenSecret);
-
-		// Create authorization header
-		const authHeader =
-			"OAuth " +
-			Object.keys(params)
-				.map((key) => `${this.percentEncode(key)}="${this.percentEncode(params[key])}"`)
-				.join(", ");
+		console.log("🔐 [CLIENT] Exchanging request token for access token via server...");
 
 		try {
-			const response = await fetch(`${url}?${new URLSearchParams(params)}`, {
-				method: "GET",
+			const response = await fetch(`${this.serverUrl}/auth/access-token`, {
+				method: "POST",
 				headers: {
-					Authorization: authHeader,
+					"Content-Type": "application/json",
 				},
+				body: JSON.stringify({
+					oauth_token: requestToken,
+					oauth_token_secret: requestTokenSecret,
+					oauth_verifier: verifier,
+				}),
 			});
 
 			if (!response.ok) {
-				throw new Error(`Access token failed: ${response.status} ${response.statusText}`);
+				const errorText = await response.text().catch(() => "Unable to read error response");
+				console.error("🚨 [ERROR] Access token request failed:", {
+					status: response.status,
+					statusText: response.statusText,
+					body: errorText,
+				});
+				throw new Error(`Access token request failed: ${response.status} ${response.statusText}`);
 			}
 
-			const responseText = await response.text();
-			const responseParams = new URLSearchParams(responseText);
+			const data = await response.json();
 
-			const accessToken = responseParams.get("oauth_token");
-			const accessTokenSecret = responseParams.get("oauth_token_secret");
-			const userId = responseParams.get("user_nsid");
-			const username = responseParams.get("username");
-			const fullname = responseParams.get("fullname");
-
-			if (!accessToken || !accessTokenSecret) {
-				throw new Error("Invalid access token response");
+			if (!data.success) {
+				console.error("🚨 [ERROR] Server returned error:", data.error);
+				throw new Error(data.error || "Unknown server error");
 			}
+
+			console.log("✅ [SUCCESS] Access token obtained for user:", data.fullname);
 
 			return {
-				accessToken,
-				accessTokenSecret,
-				userId,
-				username,
-				fullname,
+				accessToken: data.access_token,
+				accessTokenSecret: data.access_token_secret,
+				userId: data.user_nsid,
+				username: data.username,
+				fullname: data.fullname,
 			};
 		} catch (error) {
-			console.error("FlickrApiClient: Error getting access token:", error);
-			throw new Error(`Failed to get access token: ${error.message}`);
+			console.error("🚨 [ERROR] FlickrApiClient: Error getting access token:", error);
+
+			// Provide more specific error messages
+			if (error.name === "TypeError" && error.message.includes("fetch")) {
+				throw new Error(
+					`Unable to connect to OAuth server. Make sure the server is running on ${this.serverUrl}. (${error.message})`
+				);
+			} else {
+				throw new Error(`Failed to get access token: ${error.message}`);
+			}
 		}
 	}
 
 	/**
-	 * Make authenticated API request to Flickr
+	 * Make authenticated API request to Flickr via server proxy
 	 * @param {string} method - Flickr API method (e.g., 'flickr.people.getPhotos')
 	 * @param {Object} params - API parameters
 	 * @param {string} accessToken - OAuth access token
@@ -229,48 +225,52 @@ export class FlickrApiClient {
 	 * @returns {Promise<Object>} API response
 	 */
 	async makeAuthenticatedRequest(method, params = {}, accessToken, accessTokenSecret) {
-		const url = this.baseUrl;
-		const requestParams = {
-			...params,
-			method,
-			api_key: this.apiKey,
-			format: "json",
-			nojsoncallback: "1",
-			oauth_nonce: this.generateNonce(),
-			oauth_timestamp: this.getTimestamp(),
-			oauth_consumer_key: this.apiKey,
-			oauth_token: accessToken,
-			oauth_signature_method: "HMAC-SHA1",
-			oauth_version: "1.0",
-		};
-
-		// Generate signature with access token secret
-		requestParams.oauth_signature = this.generateOAuthSignature(
-			"GET",
-			url,
-			requestParams,
-			accessTokenSecret
-		);
+		console.log("🌐 [CLIENT] Making authenticated API request via server:", method);
 
 		try {
-			const response = await fetch(`${url}?${new URLSearchParams(requestParams)}`, {
-				method: "GET",
+			const response = await fetch(`${this.serverUrl}/api/photos`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({
+					method,
+					params,
+					accessToken,
+					accessTokenSecret,
+				}),
 			});
 
 			if (!response.ok) {
+				const errorText = await response.text().catch(() => "Unable to read error response");
+				console.error("🚨 [ERROR] API request failed:", {
+					status: response.status,
+					statusText: response.statusText,
+					body: errorText,
+				});
 				throw new Error(`API request failed: ${response.status} ${response.statusText}`);
 			}
 
-			const data = await response.json();
+			const result = await response.json();
 
-			if (data.stat === "fail") {
-				throw new Error(`Flickr API error: ${data.message} (Code: ${data.code})`);
+			if (!result.success) {
+				console.error("🚨 [ERROR] Server returned error:", result.error);
+				throw new Error(result.error || "Unknown server error");
 			}
 
-			return data;
+			console.log("✅ [SUCCESS] API request completed via server");
+			return result.data;
 		} catch (error) {
-			console.error(`FlickrApiClient: Error calling ${method}:`, error);
-			throw error;
+			console.error("🚨 [ERROR] FlickrApiClient: Error making authenticated request:", error);
+
+			// Provide more specific error messages
+			if (error.name === "TypeError" && error.message.includes("fetch")) {
+				throw new Error(
+					`Unable to connect to API server. Make sure the server is running on ${this.serverUrl}. (${error.message})`
+				);
+			} else {
+				throw new Error(`Failed to make API request: ${error.message}`);
+			}
 		}
 	}
 

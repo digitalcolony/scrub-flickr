@@ -16,12 +16,19 @@ export class FlickrAuthService {
 	 * @param {string} options.permissions - Flickr permission level ('read', 'write', 'delete')
 	 * @returns {Promise<string>} Authorization URL for redirect
 	 */
-	async initiateAuth(options = {}) {
+	async initiateAuth(_options = {}) {
 		try {
-			const permissions = options.permissions || this.permissions;
+			// const permissions = options.permissions || this.permissions; // not currently used
 
-			// DEV MODE: Use mock authentication for development
-			if (import.meta.env.DEV && window.location.hostname === "localhost") {
+			// Check if we have real API credentials
+			const hasRealCredentials =
+				this.apiClient.apiKey &&
+				this.apiClient.apiSecret &&
+				!this.apiClient.apiKey.includes("your_") &&
+				this.apiClient.apiKey.length > 10;
+
+			// DEV MODE: Use mock authentication only if we don't have real credentials
+			if (import.meta.env.DEV && window.location.hostname === "localhost" && !hasRealCredentials) {
 				const mockState = this.generateState();
 				const mockAuthCode = `mock_auth_code_${Date.now()}`;
 
@@ -34,7 +41,9 @@ export class FlickrAuthService {
 				return callbackUrl;
 			}
 
-			// PRODUCTION: Real OAuth 1.0a flow
+			// PRODUCTION or DEV with real credentials: Real OAuth 1.0a flow
+			console.log("🔐 [REAL API] Starting OAuth 1.0a flow with Flickr");
+
 			// Step 1: Get request token
 			const requestToken = await this.apiClient.getRequestToken();
 
@@ -43,10 +52,10 @@ export class FlickrAuthService {
 			sessionStorage.setItem("oauth_request_token_secret", requestToken.tokenSecret);
 			sessionStorage.setItem("oauth_timestamp", Date.now().toString());
 
-			// Step 2: Generate authorization URL
-			const authUrl = this.apiClient.getAuthorizationUrl(requestToken.token, permissions);
+			console.log("🔐 [REAL API] Request token obtained, redirecting to Flickr authorization");
 
-			return authUrl;
+			// Step 2: Use authorization URL from server response
+			return requestToken.authorizeUrl;
 		} catch (error) {
 			throw new Error(`Failed to initiate authentication: ${error.message}`);
 		}
@@ -61,14 +70,36 @@ export class FlickrAuthService {
 	 */
 	async completeAuth(oauthToken, oauthVerifier, state = null) {
 		try {
-			// Check timestamp to prevent replay attacks (30 minute window)
+			// Check timestamp to prevent replay attacks (2 hour window for testing)
 			const timestamp = sessionStorage.getItem("oauth_timestamp");
-			if (!timestamp || Date.now() - parseInt(timestamp) > 30 * 60 * 1000) {
-				throw new Error("Authentication session expired");
+			const sessionAge = timestamp ? Date.now() - parseInt(timestamp) : null;
+			const maxAge = 2 * 60 * 60 * 1000; // 2 hours instead of 30 minutes
+
+			console.log("🔐 [AUTH] Completing authentication...", {
+				hasTimestamp: !!timestamp,
+				sessionAge: sessionAge ? Math.round(sessionAge / 1000) + "s" : "unknown",
+				maxAge: Math.round(maxAge / 1000) + "s",
+				oauthToken: oauthToken?.substring(0, 10) + "...",
+				hasVerifier: !!oauthVerifier,
+			});
+
+			if (!timestamp || sessionAge > maxAge) {
+				throw new Error(
+					`Authentication session expired (age: ${
+						sessionAge ? Math.round(sessionAge / 60000) + "m" : "unknown"
+					})`
+				);
 			}
 
-			// DEV MODE: Handle mock authentication
-			if (import.meta.env.DEV && oauthToken.startsWith("mock_")) {
+			// Check if we have real API credentials
+			const hasRealCredentials =
+				this.apiClient.apiKey &&
+				this.apiClient.apiSecret &&
+				!this.apiClient.apiKey.includes("your_") &&
+				this.apiClient.apiKey.length > 10;
+
+			// DEV MODE: Handle mock authentication only if no real credentials
+			if (import.meta.env.DEV && oauthToken.startsWith("mock_") && !hasRealCredentials) {
 				// Validate mock state if provided
 				if (state) {
 					const storedState = sessionStorage.getItem("oauth_state");
@@ -100,10 +131,20 @@ export class FlickrAuthService {
 				return mockResult;
 			}
 
-			// PRODUCTION: Real OAuth 1.0a flow
+			// PRODUCTION or DEV with real credentials: Real OAuth 1.0a flow
+			console.log("🔐 [REAL API] Processing real OAuth callback");
+
 			// Get stored request token data
 			const requestToken = sessionStorage.getItem("oauth_request_token");
 			const requestTokenSecret = sessionStorage.getItem("oauth_request_token_secret");
+
+			console.log("🔐 [AUTH] Token validation:", {
+				hasRequestToken: !!requestToken,
+				hasRequestTokenSecret: !!requestTokenSecret,
+				requestTokenMatch: requestToken === oauthToken,
+				storedToken: requestToken?.substring(0, 10) + "...",
+				receivedToken: oauthToken?.substring(0, 10) + "...",
+			});
 
 			if (!requestToken || !requestTokenSecret) {
 				throw new Error("Missing request token data - invalid authentication state");
@@ -111,8 +152,15 @@ export class FlickrAuthService {
 
 			// Verify the returned token matches our stored request token
 			if (oauthToken !== requestToken) {
-				throw new Error("OAuth token mismatch - possible security issue");
+				throw new Error(
+					`OAuth token mismatch - stored: ${requestToken?.substring(
+						0,
+						10
+					)}..., received: ${oauthToken?.substring(0, 10)}...`
+				);
 			}
+
+			console.log("🔐 [REAL API] Exchanging request token for access token...");
 
 			// Step 3: Exchange request token for access token
 			const accessTokenData = await this.apiClient.getAccessToken(
@@ -120,6 +168,8 @@ export class FlickrAuthService {
 				requestTokenSecret,
 				oauthVerifier
 			);
+
+			console.log("🔐 [REAL API] Access token obtained successfully");
 
 			// Clean up session storage
 			this.clearSessionStorage();

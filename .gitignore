@@ -29,3 +29,6 @@ Thumbs.db
 
 # Vite
 .vite/
+
+# Windows reserved filename accidentally created on non-Windows systems
+server/nul

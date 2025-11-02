@@ -15,6 +15,9 @@ export const useAuthStore = create((set, get) => ({
 	error: null,
 	lastAttempt: null,
 	retryCount: 0,
+	// Initialization guards
+	hasInitialized: false,
+	initInProgress: false,
 
 	// Computed getters
 	isAuthenticated: () => {
@@ -33,48 +36,138 @@ export const useAuthStore = create((set, get) => ({
 	 * Checks for existing valid tokens and restores session
 	 */
 	initializeAuth: async () => {
-		set({ isLoading: true });
+		const state = get();
+		// Prevent duplicate concurrent inits
+		if (state.initInProgress) return;
+		// If already authenticated, no-op
+		if (state.status === "authenticated" && state.user && state.token) {
+			set({ hasInitialized: true });
+			return;
+		}
+
+		try {
+			console.log("[AUTH INIT] initializeAuth starting", {
+				status: state.status,
+				initInProgress: state.initInProgress,
+				hasInitialized: state.hasInitialized,
+			});
+		} catch {
+			/* noop */
+		}
+
+		set({ isLoading: true, initInProgress: true });
 
 		try {
 			const { token, user } = tokenStorageService.retrieveToken();
 
+			// Debug: what did we load from storage?
+			try {
+				console.log("[AUTH INIT] retrieved token/user from storage:", {
+					hasToken: !!token,
+					hasUser: !!user,
+				});
+			} catch {
+				// no-op logging failure
+			}
+
 			if (token && user) {
+				try {
+					console.log("[AUTH INIT] token & user found in storage; validating token...");
+				} catch {
+					/* noop */
+				}
+
 				// Validate token is still active
-				const isValid = await flickrAuthService.validateToken(token);
+				let isValid = false;
+				try {
+					isValid = await flickrAuthService.validateToken(token);
+				} catch (e) {
+					// Network or server error during validation should not force token_expired
+					console.warn("[AUTH INIT] validateToken threw, treating as invalid:", e?.message);
+					isValid = false;
+				}
 
 				if (isValid) {
+					try {
+						console.log("[AUTH INIT] token valid → authenticated");
+					} catch {
+						/* noop */
+					}
 					set({
 						user,
 						token,
 						status: "authenticated",
 						isLoading: false,
+						hasInitialized: true,
+						initInProgress: false,
 						error: null,
 					});
 				} else {
-					// Token invalid, clear storage
-					tokenStorageService.clearToken();
-					set({
-						user: null,
-						token: null,
-						status: "token_expired",
-						isLoading: false,
-						error: {
-							type: "token_invalid",
-							message: "Your session has expired. Please sign in again.",
-							recoverable: true,
-						},
-					});
+					// Re-check storage; if it's already empty, prefer unauthenticated over token_expired
+					const stillHasToken = tokenStorageService.hasValidToken();
+					if (!stillHasToken) {
+						try {
+							console.log("[AUTH INIT] invalid token but storage empty → unauthenticated");
+						} catch {
+							/* noop */
+						}
+						set({
+							user: null,
+							token: null,
+							status: "unauthenticated",
+							isLoading: false,
+							hasInitialized: true,
+							initInProgress: false,
+							error: null,
+						});
+					} else {
+						// Token invalid, clear storage and mark as expired (recoverable)
+						tokenStorageService.clearToken();
+						try {
+							console.log("[AUTH INIT] token invalid → token_expired");
+						} catch {
+							/* noop */
+						}
+						set({
+							user: null,
+							token: null,
+							status: "token_expired",
+							isLoading: false,
+							hasInitialized: true,
+							initInProgress: false,
+							error: {
+								type: "token_invalid",
+								message: "Your session has expired. Please sign in again.",
+								recoverable: true,
+							},
+						});
+					}
 				}
 			} else {
+				try {
+					console.log("[AUTH INIT] no stored token/user → unauthenticated");
+				} catch {
+					/* noop */
+				}
 				set({
 					status: "unauthenticated",
 					isLoading: false,
+					hasInitialized: true,
+					initInProgress: false,
 				});
 			}
 		} catch (error) {
+			// On unexpected errors, default to unauthenticated with recoverable error
+			try {
+				console.warn("[AUTH INIT] unexpected error:", error?.message);
+			} catch {
+				/* noop */
+			}
 			set({
-				status: "error",
+				status: "unauthenticated",
 				isLoading: false,
+				hasInitialized: true,
+				initInProgress: false,
 				error: {
 					type: "api_error",
 					message: "Failed to initialize authentication. Please try again.",
@@ -309,4 +402,4 @@ export const useAuthStore = create((set, get) => ({
 }));
 
 // Initialize authentication on store creation
-useAuthStore.getState().initializeAuth();
+// TEMPORARILY DISABLED: useAuthStore.getState().initializeAuth();

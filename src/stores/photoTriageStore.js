@@ -34,6 +34,18 @@ export const usePhotoTriageStore = create(
 				const state = get();
 				if (state.isLoadingPhotos) return;
 
+				console.log("📸 [STORE DEBUG] loadPhotos called with:", {
+					userId,
+					token: token
+						? {
+								hasAccessToken: !!token.accessToken,
+								hasAccessTokenSecret: !!token.accessTokenSecret,
+								accessTokenType: typeof token.accessToken,
+								accessTokenPrefix: token.accessToken?.substring(0, 10) + "...",
+						  }
+						: null,
+				});
+
 				set({ isLoadingPhotos: true, loadingError: null });
 
 				try {
@@ -76,7 +88,31 @@ export const usePhotoTriageStore = create(
 			 */
 			async loadMorePhotos(userId, token = null) {
 				const state = get();
-				if (state.isLoadingPhotos || !state.hasMorePhotos) return;
+
+				console.log("📚 [STORE DEBUG] loadMorePhotos called with:", {
+					userId,
+					isLoadingPhotos: state.isLoadingPhotos,
+					hasMorePhotos: state.hasMorePhotos,
+					currentPage: state.currentPage,
+					totalPhotos: state.totalPhotos,
+					loadedPhotos: state.photos.length,
+					token: token
+						? {
+								hasAccessToken: !!token.accessToken,
+								hasAccessTokenSecret: !!token.accessTokenSecret,
+								accessTokenType: typeof token.accessToken,
+								accessTokenPrefix: token.accessToken?.substring(0, 10) + "...",
+						  }
+						: null,
+				});
+
+				if (state.isLoadingPhotos || !state.hasMorePhotos) {
+					console.log("⏹️ [STORE DEBUG] loadMorePhotos aborted:", {
+						isLoadingPhotos: state.isLoadingPhotos,
+						hasMorePhotos: state.hasMorePhotos,
+					});
+					return;
+				}
 
 				set({ isLoadingPhotos: true });
 
@@ -203,23 +239,29 @@ export const usePhotoTriageStore = create(
 			getTriageStats() {
 				const state = get();
 				const totalLoaded = state.photos.length;
-				const keepCount = Object.values(state.photoTags).filter((tag) => tag === "keep").length;
-				const deleteCount = Object.values(state.photoTags).filter((tag) =>
-					tag.startsWith("delete")
-				).length;
-				const untaggedCount = totalLoaded - keepCount - deleteCount;
+				const tags = Object.values(state.photoTags);
+				const keepCount = tags.filter((tag) => tag === "keep").length;
+				const deletePendingCount = tags.filter((tag) => tag === "delete-pending").length;
+				const deleteCompletedCount = tags.filter((tag) => tag === "delete-completed").length;
+				const deleteFailedCount = tags.filter((tag) => tag === "delete-failed").length;
+				const reviewedCount =
+					keepCount + deletePendingCount + deleteCompletedCount + deleteFailedCount;
+				const untaggedCount = totalLoaded - reviewedCount;
 
 				return {
 					totalLoaded,
 					totalPhotos: state.totalPhotos,
 					keepCount,
-					deleteCount,
+					// For UI queue badges, use pending deletions only
+					deleteCount: deletePendingCount,
+					deletePendingCount,
+					deleteCompletedCount,
+					deleteFailedCount,
+					deleteTotalCount: deletePendingCount + deleteCompletedCount + deleteFailedCount,
 					untaggedCount,
 					hasMorePhotos: state.hasMorePhotos,
 					progressPercent:
-						state.totalPhotos > 0
-							? Math.round(((keepCount + deleteCount) / state.totalPhotos) * 100)
-							: 0,
+						state.totalPhotos > 0 ? Math.round((reviewedCount / state.totalPhotos) * 100) : 0,
 				};
 			},
 
@@ -243,7 +285,7 @@ export const usePhotoTriageStore = create(
 					} else {
 						get().updatePhotoStatus(photoId, "delete-failed", {
 							error: "Deletion failed",
-							attempts: (get().deleteErrors[photoId]?.attempts || 0) + 1
+							attempts: (get().deleteErrors[photoId]?.attempts || 0) + 1,
 						});
 						return false;
 					}
@@ -251,7 +293,7 @@ export const usePhotoTriageStore = create(
 					console.error(`Error deleting photo ${photoId}:`, error);
 					get().updatePhotoStatus(photoId, "delete-failed", {
 						error: error.message,
-						attempts: (get().deleteErrors[photoId]?.attempts || 0) + 1
+						attempts: (get().deleteErrors[photoId]?.attempts || 0) + 1,
 					});
 					return false;
 				}
