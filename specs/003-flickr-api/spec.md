@@ -148,8 +148,4 @@ Replace mock photo service with real Flickr API integration to fetch actual user
 - Network connectivity for API calls
 - User Flickr account with photos to test
 
-## Next Steps After Completion
-
-- Step 4: Advanced features (bulk operations, filters)
-- Step 5: UI/UX polish and mobile optimization
-- Step 6: Deployment and production setup
+<!-- Completion Note: This step is finished; no follow-on steps tracked here. -->
