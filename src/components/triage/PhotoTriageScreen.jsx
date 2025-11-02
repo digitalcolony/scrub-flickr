@@ -56,6 +56,7 @@ export function PhotoTriageScreen() {
 
 	const currentPhoto = getCurrentPhoto();
 	const stats = getTriageStats();
+	// Show the visible delete queue count (matches Delete Queue screen)
 	const visibleQueueCount = getPhotosToDelete().length;
 
 	// Debug current state
@@ -70,6 +71,7 @@ export function PhotoTriageScreen() {
 			deleteCount: stats.deleteCount,
 			untaggedCount: stats.untaggedCount,
 		},
+		visibleQueueCount,
 		user: user ? { userId: user.userId, username: user.username } : null,
 		hasToken: !!token,
 		authStatus: status,
@@ -167,6 +169,38 @@ export function PhotoTriageScreen() {
 			});
 		}
 	}, [user?.userId, token, loadPhotos, stats.totalLoaded]);
+
+	// If all currently loaded photos are reviewed but more pages exist, try auto-loading a few pages
+	const MAX_AUTO_ATTEMPTS = 3;
+	const [autoLoadAttempts, setAutoLoadAttempts] = useState(0);
+	useEffect(() => {
+		if (!user?.userId || !token) return;
+		if (isLoadingPhotos) return;
+		const noCurrent = !currentPhoto;
+		if (noCurrent && stats.hasMorePhotos && autoLoadAttempts < MAX_AUTO_ATTEMPTS) {
+			console.log(
+				"🔁 [COMPONENT DEBUG] Auto-loading more photos (attempt",
+				autoLoadAttempts + 1,
+				"of",
+				MAX_AUTO_ATTEMPTS,
+				")"
+			);
+			setAutoLoadAttempts((a) => a + 1);
+			loadMorePhotos(user.userId, token);
+		}
+		// Reset the guard when a new current photo appears
+		if (currentPhoto && autoLoadAttempts > 0) {
+			setAutoLoadAttempts(0);
+		}
+	}, [
+		currentPhoto,
+		stats.hasMorePhotos,
+		isLoadingPhotos,
+		autoLoadAttempts,
+		user?.userId,
+		token,
+		loadMorePhotos,
+	]);
 
 	// Keyboard event handler
 	const handleKeyPress = useCallback(
@@ -375,8 +409,52 @@ export function PhotoTriageScreen() {
 		);
 	}
 
-	// No photos available state
+	// No photos available in current batch
 	if (!currentPhoto && !isLoadingPhotos) {
+		// If more pages exist, either show a brief loading state (first attempt)
+		// or offer a manual button if we've already tried auto-loading.
+		if (stats.hasMorePhotos) {
+			if (autoLoadAttempts < MAX_AUTO_ATTEMPTS) {
+				return (
+					<div className="min-h-screen bg-gray-50 flex items-center justify-center">
+						<div className="text-center">
+							<div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+							<p className="text-gray-600">Loading more photos...</p>
+						</div>
+					</div>
+				);
+			}
+
+			// Auto-load already attempted: show a manual control instead of an indefinite spinner
+			return (
+				<div className="min-h-screen bg-gray-50 flex items-center justify-center">
+					<div className="text-center max-w-md">
+						<div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
+							<h2 className="text-lg font-semibold text-blue-800 mb-2">More Photos Available</h2>
+							<p className="text-blue-700 mb-4">Load the next batch to continue triaging.</p>
+							<div className="space-x-2">
+								<button
+									onClick={() => user?.userId && token && loadMorePhotos(user.userId, token)}
+									className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+								>
+									Load More Photos
+								</button>
+								{visibleQueueCount > 0 && (
+									<button
+										onClick={() => (window.location.href = "/delete-queue")}
+										className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+									>
+										Review Delete Queue ({visibleQueueCount})
+									</button>
+								)}
+							</div>
+						</div>
+					</div>
+				</div>
+			);
+		}
+
+		// Otherwise, everything loaded in this session is reviewed
 		return (
 			<div className="min-h-screen bg-gray-50 flex items-center justify-center">
 				<div className="text-center max-w-md">
@@ -393,42 +471,6 @@ export function PhotoTriageScreen() {
 							<p>🗑️ Tagged for deletion: {stats.deleteCount} photos</p>
 						</div>
 						<div className="space-x-2">
-							{/* Debug Authentication Button */}
-							<button
-								onClick={() => {
-									console.log("🔍 [AUTH DEBUG] Manual auth check triggered");
-									console.log("🔍 [AUTH DEBUG] Current auth state:", useAuthStore.getState());
-									console.log("🔍 [AUTH DEBUG] Calling initializeAuth...");
-									useAuthStore.getState().initializeAuth();
-								}}
-								className="px-3 py-1 bg-gray-500 text-white text-sm rounded hover:bg-gray-600"
-							>
-								Debug Auth
-							</button>
-
-							{stats.hasMorePhotos && (
-								<button
-									onClick={() => {
-										console.log("🔘 [BUTTON DEBUG] Load More Photos clicked", {
-											hasUserId: !!user?.userId,
-											hasToken: !!token,
-											userId: user?.userId,
-											tokenType: typeof token,
-											isLoadingPhotos,
-										});
-										if (user?.userId && token) {
-											console.log("🚀 [BUTTON DEBUG] Calling loadMorePhotos...");
-											loadMorePhotos(user.userId, token);
-										} else {
-											console.log("❌ [BUTTON DEBUG] Missing userId or token");
-										}
-									}}
-									className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-									disabled={isLoadingPhotos}
-								>
-									{isLoadingPhotos ? "Loading..." : "Load More Photos"}
-								</button>
-							)}
 							<button
 								onClick={() => (window.location.href = "/delete-queue")}
 								className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
