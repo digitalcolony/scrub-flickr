@@ -18,13 +18,17 @@ export function PhotoTriageScreen() {
 		loadingError,
 		clearError,
 		resetAllTags,
+		getFilteredUntaggedPhotos,
+		setFilters,
+		filters,
 	} = usePhotoTriageStore();
 
 	const [imageLoading, setImageLoading] = useState(false);
 	const [imageError, setImageError] = useState(false);
 	const [authInitialized, setAuthInitialized] = useState(false);
 
-	const currentPhoto = getCurrentPhoto();
+	const filteredUntagged = getFilteredUntaggedPhotos();
+	const currentPhoto = filteredUntagged[0] || getCurrentPhoto();
 	const stats = getTriageStats();
 
 	// Debug current state
@@ -442,6 +446,47 @@ export function PhotoTriageScreen() {
 									Back to Home
 								</button>
 							</div>
+						</div>
+					</div>
+
+					{/* Simple filter bar */}
+					<div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+						<div>
+							<input
+								type="text"
+								value={filters.query}
+								onChange={(e) => setFilters({ query: e.target.value })}
+								placeholder="Filter by title..."
+								className="w-full border rounded px-3 py-2 text-sm"
+							/>
+						</div>
+						<label className="inline-flex items-center space-x-2 text-sm text-gray-700">
+							<input
+								type="checkbox"
+								checked={filters.hasTags}
+								onChange={(e) => setFilters({ hasTags: e.target.checked })}
+								className="rounded"
+							/>
+							<span>Has tags</span>
+						</label>
+						<div className="flex items-center space-x-2 text-sm">
+							<select
+								value={filters.sortBy}
+								onChange={(e) => setFilters({ sortBy: e.target.value })}
+								className="border rounded px-2 py-2"
+							>
+								<option value="dateUploaded">Sort: Date Uploaded</option>
+								<option value="title">Sort: Title</option>
+								<option value="views">Sort: Views</option>
+							</select>
+							<select
+								value={filters.sortOrder}
+								onChange={(e) => setFilters({ sortOrder: e.target.value })}
+								className="border rounded px-2 py-2"
+							>
+								<option value="desc">Desc</option>
+								<option value="asc">Asc</option>
+							</select>
 						</div>
 					</div>
 

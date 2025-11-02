@@ -25,6 +25,14 @@ export const usePhotoTriageStore = create(
 			currentPage: 1,
 			photosPerPage: 50,
 
+			// Filter/Sort state (persisted)
+			filters: {
+				query: "", // text in title
+				hasTags: false,
+				sortBy: "dateUploaded", // dateUploaded | title | views
+				sortOrder: "desc", // asc | desc
+			},
+
 			/**
 			 * Load initial batch of photos
 			 * @param {string} userId - Flickr user ID
@@ -148,7 +156,12 @@ export const usePhotoTriageStore = create(
 			 */
 			getCurrentPhoto() {
 				const state = get();
-				const untaggedPhotos = state.photos.filter((photo) => !state.photoTags[photo.id]);
+				// If filters are active, prefer filtered untagged list
+				const filtered = get().getFilteredUntaggedPhotos();
+				const untaggedPhotos =
+					filtered.length > 0
+						? filtered
+						: state.photos.filter((photo) => !state.photoTags[photo.id]);
 
 				if (untaggedPhotos.length === 0) {
 					return null;
@@ -230,6 +243,51 @@ export const usePhotoTriageStore = create(
 			getPhotosToKeep() {
 				const state = get();
 				return state.photos.filter((photo) => state.photoTags[photo.id] === "keep");
+			},
+
+			/**
+			 * Update filters
+			 * @param {Object} next - Partial filters
+			 */
+			setFilters(next) {
+				const state = get();
+				set({ filters: { ...state.filters, ...next } });
+			},
+
+			/**
+			 * Get untagged photos after applying filters and sorting
+			 * @returns {Array} filtered and sorted untagged photos
+			 */
+			getFilteredUntaggedPhotos() {
+				const { photos, photoTags, filters } = get();
+				let list = photos.filter((p) => !photoTags[p.id]);
+
+				// Apply text query on title
+				if (filters.query && filters.query.trim().length > 0) {
+					const q = filters.query.trim().toLowerCase();
+					list = list.filter((p) => (p.title || "").toLowerCase().includes(q));
+				}
+
+				// Has any tags
+				if (filters.hasTags) {
+					list = list.filter((p) => Array.isArray(p.tags) && p.tags.length > 0);
+				}
+
+				// Sorting
+				const dir = filters.sortOrder === "asc" ? 1 : -1;
+				list = [...list].sort((a, b) => {
+					switch (filters.sortBy) {
+						case "title":
+							return (a.title || "").localeCompare(b.title || "") * dir;
+						case "views":
+							return ((a.views || 0) - (b.views || 0)) * dir;
+						case "dateUploaded":
+						default:
+							return ((a.dateUploaded || 0) - (b.dateUploaded || 0)) * dir;
+					}
+				});
+
+				return list;
 			},
 
 			/**
@@ -362,10 +420,11 @@ export const usePhotoTriageStore = create(
 		{
 			name: "photo-triage-storage",
 			storage: createJSONStorage(() => localStorage),
-			// Only persist the tagging decisions, not the photo data
+			// Persist tagging decisions and filters, not the photo data
 			partialize: (state) => ({
 				photoTags: state.photoTags,
 				deleteErrors: state.deleteErrors,
+				filters: state.filters,
 			}),
 		}
 	)
