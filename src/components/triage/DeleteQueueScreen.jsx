@@ -12,25 +12,64 @@ export function DeleteQueueScreen() {
 		getDeletedPhotoCount,
 		untagPhoto,
 		loadPhotos,
+		loadMorePhotos,
 		deletePhoto,
 		photos,
 		isLoadingPhotos,
+		hasMorePhotos,
 	} = usePhotoTriageStore();
 	const { user, token } = useAuthStore();
 
 	const [isDeleting, setIsDeleting] = useState(false);
 	const [deletingIds, setDeletingIds] = useState(new Set());
 	const [deletionProgress, setDeletionProgress] = useState({ current: 0, total: 0 });
+	const [attemptedReload, setAttemptedReload] = useState(false);
+	const [didStartDeletion, setDidStartDeletion] = useState(false);
+	const [didAutoRedirect, setDidAutoRedirect] = useState(false);
 
 	const photosToDelete = getPhotosToDelete();
 	const deletedPhotoCount = getDeletedPhotoCount();
 
-	// Load photos if we have tags but no photos loaded
+	// Only treat as "loading" when we actually have pending tags to resolve
+	const isQueueLoading = isLoadingPhotos && deletedPhotoCount > 0;
+	const isEmptyQueue = photosToDelete.length === 0;
+
+	// Ensure we have photo details for tagged items
 	useEffect(() => {
-		if (user && token && deletedPhotoCount > 0 && photos.length === 0 && !isLoadingPhotos) {
-			loadPhotos(user.userId, token);
+		if (!user || !token || isLoadingPhotos) return;
+
+		// If there are pending tags but no matching photo objects, fetch details
+		if (deletedPhotoCount > 0 && photosToDelete.length === 0) {
+			// If no photos loaded at all, start from page 1
+			if (photos.length === 0) {
+				loadPhotos(user.userId, token);
+				return;
+			}
+
+			// If more pages are available, load next page to try to find tagged items
+			if (hasMorePhotos) {
+				loadMorePhotos(user.userId, token);
+				return;
+			}
+
+			// If we've exhausted pages and still have tagged IDs without details, attempt one reload
+			if (!hasMorePhotos && !attemptedReload) {
+				setAttemptedReload(true);
+				loadPhotos(user.userId, token);
+			}
 		}
-	}, [user, token, deletedPhotoCount, photos.length, isLoadingPhotos, loadPhotos]);
+	}, [
+		user,
+		token,
+		isLoadingPhotos,
+		deletedPhotoCount,
+		photosToDelete.length,
+		photos.length,
+		hasMorePhotos,
+		loadPhotos,
+		loadMorePhotos,
+		attemptedReload,
+	]);
 
 	const handleRemoveFromQueue = (photoId) => {
 		untagPhoto(photoId);
@@ -38,6 +77,7 @@ export function DeleteQueueScreen() {
 
 	const handleDeleteOne = async (photoId) => {
 		if (!user || !token) return;
+		setDidStartDeletion(true);
 		setDeletingIds((prev) => new Set(prev).add(photoId));
 		try {
 			await deletePhoto(photoId, token);
@@ -56,6 +96,7 @@ export function DeleteQueueScreen() {
 		if (!user || !token || photosToDelete.length === 0) return;
 
 		setIsDeleting(true);
+		setDidStartDeletion(true);
 		setDeletionProgress({ current: 0, total: photosToDelete.length });
 
 		for (let i = 0; i < photosToDelete.length; i++) {
@@ -76,6 +117,21 @@ export function DeleteQueueScreen() {
 		setIsDeleting(false);
 	};
 
+	// After a deletion session, auto-redirect to triage when the queue is empty
+	useEffect(() => {
+		if (
+			didStartDeletion &&
+			!didAutoRedirect &&
+			!isDeleting &&
+			photosToDelete.length === 0 &&
+			deletedPhotoCount === 0
+		) {
+			setDidAutoRedirect(true);
+			// Use hard navigation for simplicity/consistency with existing buttons
+			window.location.href = "/triage";
+		}
+	}, [didStartDeletion, didAutoRedirect, isDeleting, photosToDelete.length, deletedPhotoCount]);
+
 	return (
 		<div className="min-h-screen bg-gray-50">
 			{/* Header */}
@@ -85,10 +141,12 @@ export function DeleteQueueScreen() {
 						<h1 className="text-2xl font-bold text-gray-900">Delete Queue</h1>
 						<div className="flex items-center space-x-4">
 							<span className="text-sm text-gray-600">
-								{isLoadingPhotos
-									? "Loading..."
+								{isEmptyQueue
+									? `${photosToDelete.length} photos tagged for deletion`
 									: isDeleting
 									? `Deleting ${deletionProgress.current}/${deletionProgress.total}...`
+									: isQueueLoading
+									? "Loading..."
 									: `${photosToDelete.length} photos tagged for deletion`}
 							</span>
 							{photosToDelete.length > 0 && !isDeleting && (
@@ -112,14 +170,8 @@ export function DeleteQueueScreen() {
 
 			{/* Content */}
 			<div className="max-w-6xl mx-auto px-4 py-8">
-				{isLoadingPhotos ? (
-					<div className="text-center py-12">
-						<div className="bg-white rounded-lg shadow p-8">
-							<div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
-							<p className="text-gray-600">Loading photos...</p>
-						</div>
-					</div>
-				) : photosToDelete.length === 0 && deletedPhotoCount === 0 ? (
+				{/* Prefer empty-queue view over any loading when there are no visible items */}
+				{isEmptyQueue ? (
 					<div className="text-center py-12">
 						<div className="bg-gray-100 rounded-lg p-8">
 							<h2 className="text-xl font-semibold text-gray-700 mb-2">
@@ -132,16 +184,6 @@ export function DeleteQueueScreen() {
 							>
 								Start Triaging Photos
 							</button>
-						</div>
-					</div>
-				) : photosToDelete.length === 0 && deletedPhotoCount > 0 ? (
-					<div className="text-center py-12">
-						<div className="bg-yellow-50 border border-yellow-200 rounded-lg p-8">
-							<h2 className="text-xl font-semibold text-yellow-800 mb-2">Loading Tagged Photos</h2>
-							<p className="text-yellow-700 mb-4">
-								Found {deletedPhotoCount} photos tagged for deletion. Loading photo details...
-							</p>
-							<div className="animate-spin rounded-full h-6 w-6 border-b-2 border-yellow-600 mx-auto"></div>
 						</div>
 					</div>
 				) : (

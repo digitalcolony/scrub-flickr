@@ -25,13 +25,7 @@ export const usePhotoTriageStore = create(
 			currentPage: 1,
 			photosPerPage: 50,
 
-			// Filter/Sort state (persisted)
-			filters: {
-				query: "", // text in title
-				hasTags: false,
-				sortBy: "dateUploaded", // dateUploaded | title | views
-				sortOrder: "desc", // asc | desc
-			},
+			// Note: filter/sort UI removed; store no longer maintains client-side filters
 
 			/**
 			 * Load initial batch of photos
@@ -65,10 +59,11 @@ export const usePhotoTriageStore = create(
 						perPage: state.photosPerPage,
 					});
 
-					const untaggedPhotos = response.photos.filter((photo) => !state.photoTags[photo.id]);
+					const initialPhotos = response.photos;
+					const untaggedPhotos = initialPhotos.filter((photo) => !state.photoTags[photo.id]);
 
 					set({
-						photos: response.photos,
+						photos: initialPhotos,
 						totalPhotos: response.pagination.total,
 						hasMorePhotos: response.pagination.page < response.pagination.pages,
 						currentPhotoIndex: 0,
@@ -76,9 +71,9 @@ export const usePhotoTriageStore = create(
 						currentPage: 1,
 					});
 
-					// If all photos are tagged, load more
-					if (untaggedPhotos.length === 0 && response.pagination.page < response.pagination.pages) {
-						get().loadMorePhotos(userId, token);
+					// Top-up: if fewer than desired untagged are available, fetch more pages to fill the working set
+					if (untaggedPhotos.length < state.photosPerPage && get().hasMorePhotos) {
+						await get().ensureUntaggedBuffer(state.photosPerPage, userId, token);
 					}
 				} catch (error) {
 					console.error("Error loading photos:", error);
@@ -141,6 +136,12 @@ export const usePhotoTriageStore = create(
 						currentPage: response.pagination.page,
 						isLoadingPhotos: false,
 					});
+
+					// After loading a page, ensure we have a healthy buffer of untagged photos
+					const untaggedCount = get().photos.filter((p) => !get().photoTags[p.id]).length;
+					if (untaggedCount < state.photosPerPage && get().hasMorePhotos) {
+						await get().ensureUntaggedBuffer(state.photosPerPage, userId, token);
+					}
 				} catch (error) {
 					console.error("Error loading more photos:", error);
 					set({
@@ -151,22 +152,59 @@ export const usePhotoTriageStore = create(
 			},
 
 			/**
+			 * Ensure at least minCount untagged photos are available by preloading more pages
+			 * (caps extra page fetches to avoid excessive requests in one call)
+			 * @param {number} minCount - Desired minimum untagged photos in working set
+			 * @param {string} userId
+			 * @param {Object} token
+			 */
+			ensureUntaggedBuffer: async (minCount, userId, token = null) => {
+				let state = get();
+				let extraPagesFetched = 0;
+				const maxExtraPages = 3; // safety cap per invocation
+
+				while (extraPagesFetched < maxExtraPages) {
+					state = get();
+					const currentUntagged = state.photos.filter((p) => !state.photoTags[p.id]).length;
+					if (currentUntagged >= minCount || !state.hasMorePhotos) break;
+
+					set({ isLoadingPhotos: true });
+					try {
+						const response = await flickrPhotoService.getUserPhotos({
+							userId,
+							accessToken: token?.accessToken,
+							accessTokenSecret: token?.accessTokenSecret,
+							page: state.currentPage + 1,
+							perPage: state.photosPerPage,
+						});
+
+						const nextAll = [...state.photos, ...response.photos];
+						set({
+							photos: nextAll,
+							hasMorePhotos: response.pagination.page < response.pagination.pages,
+							currentPage: response.pagination.page,
+							isLoadingPhotos: false,
+						});
+
+						extraPagesFetched += 1;
+					} catch (e) {
+						console.error("Error preloading buffer:", e);
+						set({ isLoadingPhotos: false, loadingError: e.message });
+						break;
+					}
+				}
+			},
+
+			/**
 			 * Get current photo for triage
 			 * @returns {Object|null} Current photo or null if none available
 			 */
 			getCurrentPhoto() {
 				const state = get();
-				// If filters are active, prefer filtered untagged list
-				const filtered = get().getFilteredUntaggedPhotos();
-				const untaggedPhotos =
-					filtered.length > 0
-						? filtered
-						: state.photos.filter((photo) => !state.photoTags[photo.id]);
-
+				const untaggedPhotos = state.photos.filter((photo) => !state.photoTags[photo.id]);
 				if (untaggedPhotos.length === 0) {
 					return null;
 				}
-
 				return untaggedPhotos[0];
 			},
 
@@ -245,50 +283,7 @@ export const usePhotoTriageStore = create(
 				return state.photos.filter((photo) => state.photoTags[photo.id] === "keep");
 			},
 
-			/**
-			 * Update filters
-			 * @param {Object} next - Partial filters
-			 */
-			setFilters(next) {
-				const state = get();
-				set({ filters: { ...state.filters, ...next } });
-			},
-
-			/**
-			 * Get untagged photos after applying filters and sorting
-			 * @returns {Array} filtered and sorted untagged photos
-			 */
-			getFilteredUntaggedPhotos() {
-				const { photos, photoTags, filters } = get();
-				let list = photos.filter((p) => !photoTags[p.id]);
-
-				// Apply text query on title
-				if (filters.query && filters.query.trim().length > 0) {
-					const q = filters.query.trim().toLowerCase();
-					list = list.filter((p) => (p.title || "").toLowerCase().includes(q));
-				}
-
-				// Has any tags
-				if (filters.hasTags) {
-					list = list.filter((p) => Array.isArray(p.tags) && p.tags.length > 0);
-				}
-
-				// Sorting
-				const dir = filters.sortOrder === "asc" ? 1 : -1;
-				list = [...list].sort((a, b) => {
-					switch (filters.sortBy) {
-						case "title":
-							return (a.title || "").localeCompare(b.title || "") * dir;
-						case "views":
-							return ((a.views || 0) - (b.views || 0)) * dir;
-						case "dateUploaded":
-						default:
-							return ((a.dateUploaded || 0) - (b.dateUploaded || 0)) * dir;
-					}
-				});
-
-				return list;
-			},
+			// getFilteredUntaggedPhotos and setFilters removed
 
 			/**
 			 * Get triage statistics
@@ -302,9 +297,11 @@ export const usePhotoTriageStore = create(
 				const deletePendingCount = tags.filter((tag) => tag === "delete-pending").length;
 				const deleteCompletedCount = tags.filter((tag) => tag === "delete-completed").length;
 				const deleteFailedCount = tags.filter((tag) => tag === "delete-failed").length;
-				const reviewedCount =
-					keepCount + deletePendingCount + deleteCompletedCount + deleteFailedCount;
-				const untaggedCount = totalLoaded - reviewedCount;
+
+				// Compute remaining among currently loaded photos only to avoid negative values
+				const loadedTagValues = state.photos.map((p) => state.photoTags[p.id]).filter((v) => !!v);
+				const loadedReviewedCount = loadedTagValues.length;
+				const untaggedCount = Math.max(0, totalLoaded - loadedReviewedCount);
 
 				return {
 					totalLoaded,
@@ -316,10 +313,24 @@ export const usePhotoTriageStore = create(
 					deleteCompletedCount,
 					deleteFailedCount,
 					deleteTotalCount: deletePendingCount + deleteCompletedCount + deleteFailedCount,
+					reviewedOverallCount: tags.length,
+					loadedReviewedCount,
 					untaggedCount,
 					hasMorePhotos: state.hasMorePhotos,
 					progressPercent:
-						state.totalPhotos > 0 ? Math.round((reviewedCount / state.totalPhotos) * 100) : 0,
+						state.totalPhotos > 0
+							? Math.min(
+									100,
+									Math.max(
+										0,
+										Math.round(
+											((keepCount + deletePendingCount + deleteCompletedCount + deleteFailedCount) /
+												state.totalPhotos) *
+												100
+										)
+									)
+							  )
+							: 0,
 				};
 			},
 
@@ -400,17 +411,6 @@ export const usePhotoTriageStore = create(
 			},
 
 			/**
-			 * Reset all photo tags (start fresh)
-			 */
-			resetAllTags() {
-				set({
-					photoTags: {},
-					deleteErrors: {},
-					currentPhotoIndex: 0,
-				});
-			},
-
-			/**
 			 * Clear loading error
 			 */
 			clearError() {
@@ -424,7 +424,6 @@ export const usePhotoTriageStore = create(
 			partialize: (state) => ({
 				photoTags: state.photoTags,
 				deleteErrors: state.deleteErrors,
-				filters: state.filters,
 			}),
 		}
 	)

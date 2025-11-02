@@ -17,19 +17,16 @@ export function PhotoTriageScreen() {
 		isLoadingPhotos,
 		loadingError,
 		clearError,
-		resetAllTags,
-		getFilteredUntaggedPhotos,
-		setFilters,
-		filters,
+		getPhotosToDelete,
 	} = usePhotoTriageStore();
 
 	const [imageLoading, setImageLoading] = useState(false);
 	const [imageError, setImageError] = useState(false);
 	const [authInitialized, setAuthInitialized] = useState(false);
 
-	const filteredUntagged = getFilteredUntaggedPhotos();
-	const currentPhoto = filteredUntagged[0] || getCurrentPhoto();
+	const currentPhoto = getCurrentPhoto();
 	const stats = getTriageStats();
+	const visibleQueueCount = getPhotosToDelete().length;
 
 	// Debug current state
 	console.log("📊 [COMPONENT DEBUG] PhotoTriageScreen render:", {
@@ -347,7 +344,10 @@ export function PhotoTriageScreen() {
 					<div className="bg-green-50 border border-green-200 rounded-lg p-6">
 						<h2 className="text-lg font-semibold text-green-800 mb-2">All Photos Reviewed!</h2>
 						<p className="text-green-700 mb-4">
-							You've reviewed all {stats.totalLoaded} loaded photos.
+							You've reviewed all {stats.totalLoaded} loaded photos in this batch.
+							{!!stats.reviewedOverallCount && (
+								<span> Total reviewed overall: {stats.reviewedOverallCount}.</span>
+							)}
 						</p>
 						<div className="text-sm text-green-600 mb-4">
 							<p>✅ Kept: {stats.keepCount} photos</p>
@@ -394,13 +394,7 @@ export function PhotoTriageScreen() {
 								onClick={() => (window.location.href = "/delete-queue")}
 								className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
 							>
-								Review Delete Queue ({stats.deleteCount})
-							</button>
-							<button
-								onClick={resetAllTags}
-								className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
-							>
-								Start Over
+								Review Delete Queue ({visibleQueueCount})
 							</button>
 						</div>
 					</div>
@@ -426,17 +420,19 @@ export function PhotoTriageScreen() {
 								<span className="text-green-600">✅ Keep: {stats.keepCount}</span>
 								<span className="text-red-600">🗑️ Delete: {stats.deleteCount}</span>
 								<span className="text-gray-600">📋 Remaining: {stats.untaggedCount}</span>
-								{stats.hasMorePhotos && <span className="text-blue-600">+ more available</span>}
+								<span className="text-blue-600">
+									📈 Reviewed overall: {stats.reviewedOverallCount}/{stats.totalPhotos}
+								</span>
 							</div>
 
 							{/* Navigation buttons */}
 							<div className="flex items-center space-x-2">
-								{stats.deleteCount > 0 && (
+								{visibleQueueCount > 0 && (
 									<button
 										onClick={() => (window.location.href = "/delete-queue")}
 										className="px-3 py-1 bg-red-600 text-white text-sm rounded hover:bg-red-700"
 									>
-										Delete Queue ({stats.deleteCount})
+										Delete Queue ({visibleQueueCount})
 									</button>
 								)}
 								<button
@@ -449,46 +445,7 @@ export function PhotoTriageScreen() {
 						</div>
 					</div>
 
-					{/* Simple filter bar */}
-					<div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
-						<div>
-							<input
-								type="text"
-								value={filters.query}
-								onChange={(e) => setFilters({ query: e.target.value })}
-								placeholder="Filter by title..."
-								className="w-full border rounded px-3 py-2 text-sm"
-							/>
-						</div>
-						<label className="inline-flex items-center space-x-2 text-sm text-gray-700">
-							<input
-								type="checkbox"
-								checked={filters.hasTags}
-								onChange={(e) => setFilters({ hasTags: e.target.checked })}
-								className="rounded"
-							/>
-							<span>Has tags</span>
-						</label>
-						<div className="flex items-center space-x-2 text-sm">
-							<select
-								value={filters.sortBy}
-								onChange={(e) => setFilters({ sortBy: e.target.value })}
-								className="border rounded px-2 py-2"
-							>
-								<option value="dateUploaded">Sort: Date Uploaded</option>
-								<option value="title">Sort: Title</option>
-								<option value="views">Sort: Views</option>
-							</select>
-							<select
-								value={filters.sortOrder}
-								onChange={(e) => setFilters({ sortOrder: e.target.value })}
-								className="border rounded px-2 py-2"
-							>
-								<option value="desc">Desc</option>
-								<option value="asc">Asc</option>
-							</select>
-						</div>
-					</div>
+					{/* Filter bar removed */}
 
 					{/* Progress bar */}
 					{stats.totalPhotos > 0 && (
@@ -500,7 +457,7 @@ export function PhotoTriageScreen() {
 								/>
 							</div>
 							<p className="text-xs text-gray-500 mt-1">
-								{stats.progressPercent}% complete ({stats.keepCount + stats.deleteCount} of{" "}
+								{stats.progressPercent}% complete ({stats.reviewedOverallCount} of{" "}
 								{stats.totalPhotos} photos reviewed)
 							</p>
 						</div>
