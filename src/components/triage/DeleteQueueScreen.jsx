@@ -31,8 +31,11 @@ export function DeleteQueueScreen() {
 	const deletedPhotoCount = getDeletedPhotoCount();
 
 	// Only treat as "loading" when we actually have pending tags to resolve
-	const isQueueLoading = isLoadingPhotos && deletedPhotoCount > 0;
+	// Note: previously used in header; queuedButNotVisible now covers the UX case
 	const isEmptyQueue = photosToDelete.length === 0;
+	// Show a loading state only while we can still reconcile (actively loading or more pages available)
+	const queuedButNotVisible =
+		isEmptyQueue && deletedPhotoCount > 0 && (isLoadingPhotos || hasMorePhotos);
 
 	// Ensure we have photo details for tagged items
 	useEffect(() => {
@@ -117,20 +120,17 @@ export function DeleteQueueScreen() {
 		setIsDeleting(false);
 	};
 
-	// After a deletion session, auto-redirect to triage when the queue is empty
+	// After a deletion session, auto-redirect to triage when the visible queue is empty
+	// Note: redirect based on visible queue only, regardless of global pending tags elsewhere
 	useEffect(() => {
-		if (
-			didStartDeletion &&
-			!didAutoRedirect &&
-			!isDeleting &&
-			photosToDelete.length === 0 &&
-			deletedPhotoCount === 0
-		) {
+		if (didStartDeletion && !didAutoRedirect && !isDeleting && photosToDelete.length === 0) {
 			setDidAutoRedirect(true);
-			// Use hard navigation for simplicity/consistency with existing buttons
-			window.location.href = "/triage";
+			// slight delay to allow UI settle
+			setTimeout(() => {
+				window.location.href = "/triage";
+			}, 250);
 		}
-	}, [didStartDeletion, didAutoRedirect, isDeleting, photosToDelete.length, deletedPhotoCount]);
+	}, [didStartDeletion, didAutoRedirect, isDeleting, photosToDelete.length]);
 
 	return (
 		<div className="min-h-screen bg-gray-50">
@@ -141,12 +141,10 @@ export function DeleteQueueScreen() {
 						<h1 className="text-2xl font-bold text-gray-900">Delete Queue</h1>
 						<div className="flex items-center space-x-4">
 							<span className="text-sm text-gray-600">
-								{isEmptyQueue
-									? `${photosToDelete.length} photos tagged for deletion`
+								{queuedButNotVisible
+									? "Loading queued photos…"
 									: isDeleting
 									? `Deleting ${deletionProgress.current}/${deletionProgress.total}...`
-									: isQueueLoading
-									? "Loading..."
 									: `${photosToDelete.length} photos tagged for deletion`}
 							</span>
 							{photosToDelete.length > 0 && !isDeleting && (
@@ -170,8 +168,15 @@ export function DeleteQueueScreen() {
 
 			{/* Content */}
 			<div className="max-w-6xl mx-auto px-4 py-8">
-				{/* Prefer empty-queue view over any loading when there are no visible items */}
-				{isEmptyQueue ? (
+				{/* If there are pending tags but no visible items yet, show a short loading panel */}
+				{queuedButNotVisible ? (
+					<div className="text-center py-16">
+						<div className="inline-flex items-center px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
+							<div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600 mr-3"></div>
+							<span className="text-blue-800 text-sm">Loading queued photos…</span>
+						</div>
+					</div>
+				) : isEmptyQueue ? (
 					<div className="text-center py-12">
 						<div className="bg-gray-100 rounded-lg p-8">
 							<h2 className="text-xl font-semibold text-gray-700 mb-2">

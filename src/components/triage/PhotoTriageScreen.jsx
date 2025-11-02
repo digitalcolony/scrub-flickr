@@ -468,7 +468,7 @@ export function PhotoTriageScreen() {
 						</p>
 						<div className="text-sm text-green-600 mb-4">
 							<p>✅ Kept: {stats.keepCount} photos</p>
-							<p>🗑️ Tagged for deletion: {stats.deleteCount} photos</p>
+							<p>🗑️ Tagged for deletion: {visibleQueueCount} photos</p>
 						</div>
 						<div className="space-x-2">
 							<button
@@ -499,7 +499,7 @@ export function PhotoTriageScreen() {
 							{/* Progress stats */}
 							<div className="flex items-center space-x-4 text-sm">
 								<span className="text-green-600">✅ Keep: {stats.keepCount}</span>
-								<span className="text-red-600">🗑️ Delete: {stats.deleteCount}</span>
+								<span className="text-red-600">🗑️ Delete: {visibleQueueCount}</span>
 								<span className="text-gray-600">📋 Remaining: {stats.untaggedCount}</span>
 								<span className="text-blue-600">
 									📈 Reviewed overall: {stats.reviewedOverallCount}/{stats.totalPhotos}
