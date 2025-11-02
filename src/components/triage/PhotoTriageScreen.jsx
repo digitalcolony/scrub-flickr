@@ -23,6 +23,36 @@ export function PhotoTriageScreen() {
 	const [imageLoading, setImageLoading] = useState(false);
 	const [imageError, setImageError] = useState(false);
 	const [authInitialized, setAuthInitialized] = useState(false);
+	// Confirmation preference: confirm when deleting Public photos
+	const [confirmPublicDelete, setConfirmPublicDelete] = useState(() => {
+		try {
+			const saved = localStorage.getItem("confirm-public-delete");
+			return saved ? saved === "true" : false; // default unchecked to preserve existing behavior
+		} catch {
+			return false;
+		}
+	});
+
+	// Centered confirm modal state for deleting Public photos
+	const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+	const [confirmTarget, setConfirmTarget] = useState(null); // { photoId, title }
+
+	const openConfirmForDelete = (photo) => {
+		setConfirmTarget({ photoId: photo.id, title: photo.title });
+		setIsConfirmOpen(true);
+	};
+
+	const closeConfirm = () => {
+		setIsConfirmOpen(false);
+		setConfirmTarget(null);
+	};
+
+	const confirmDeleteNow = () => {
+		if (confirmTarget?.photoId) {
+			tagPhoto(confirmTarget.photoId, "delete-pending");
+		}
+		closeConfirm();
+	};
 
 	const currentPhoto = getCurrentPhoto();
 	const stats = getTriageStats();
@@ -142,6 +172,7 @@ export function PhotoTriageScreen() {
 	const handleKeyPress = useCallback(
 		(event) => {
 			if (!currentPhoto) return;
+			if (isConfirmOpen) return; // don't process shortcuts while modal is open
 
 			// Prevent if user is typing in an input
 			if (event.target.tagName === "INPUT" || event.target.tagName === "TEXTAREA") {
@@ -157,7 +188,12 @@ export function PhotoTriageScreen() {
 				case "d":
 				case "arrowright":
 					event.preventDefault();
-					tagPhoto(currentPhoto.id, "delete-pending");
+					// Reuse same confirmation logic as the button with a nicer modal
+					if (confirmPublicDelete && currentPhoto.isPublic) {
+						openConfirmForDelete(currentPhoto);
+					} else {
+						tagPhoto(currentPhoto.id, "delete-pending");
+					}
 					break;
 				case "r":
 					event.preventDefault();
@@ -169,7 +205,7 @@ export function PhotoTriageScreen() {
 					break;
 			}
 		},
-		[currentPhoto, tagPhoto, loadPhotos, user?.userId]
+		[currentPhoto, tagPhoto, loadPhotos, user?.userId, confirmPublicDelete, isConfirmOpen]
 	);
 
 	// Set up keyboard event listeners
@@ -288,9 +324,12 @@ export function PhotoTriageScreen() {
 	};
 
 	const handleDeletePhoto = () => {
-		if (currentPhoto) {
-			tagPhoto(currentPhoto.id, "delete-pending");
+		if (!currentPhoto) return;
+		if (confirmPublicDelete && currentPhoto.isPublic) {
+			openConfirmForDelete(currentPhoto);
+			return;
 		}
+		tagPhoto(currentPhoto.id, "delete-pending");
 	};
 
 	// Loading state
@@ -536,6 +575,60 @@ export function PhotoTriageScreen() {
 							<span className="block text-sm opacity-75">Press D or →</span>
 						</button>
 					</div>
+
+					{/* Public delete confirmation preference */}
+					<div className="mt-4 flex items-center justify-center">
+						<label className="inline-flex items-center text-sm text-gray-600 select-none">
+							<input
+								type="checkbox"
+								className="mr-2 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+								checked={confirmPublicDelete}
+								onChange={(e) => {
+									setConfirmPublicDelete(e.target.checked);
+									try {
+										localStorage.setItem("confirm-public-delete", String(e.target.checked));
+									} catch {
+										/* Ignore storage write errors (e.g., private mode/quota) */
+									}
+								}}
+							/>
+							<span>
+								Confirm before deleting <span className="font-semibold">Public</span> photos
+							</span>
+						</label>
+					</div>
+
+					{/* Centered confirmation modal */}
+					{isConfirmOpen && (
+						<div className="fixed inset-0 z-50 flex items-center justify-center">
+							<div className="absolute inset-0 bg-black/50" onClick={closeConfirm} />
+							<div className="relative bg-white rounded-lg shadow-xl w-full max-w-md mx-4 p-6">
+								<h3 className="text-lg font-semibold text-gray-900 mb-2">Confirm Delete</h3>
+								<p className="text-sm text-gray-700 mb-4">
+									This photo is <span className="font-semibold">Public</span>. Are you sure you want
+									to add it to the delete queue?
+								</p>
+								{confirmTarget?.title && (
+									<p className="text-xs text-gray-500 mb-4 truncate">{confirmTarget.title}</p>
+								)}
+
+								<div className="flex justify-end space-x-2">
+									<button
+										onClick={closeConfirm}
+										className="px-3 py-1.5 bg-gray-100 text-gray-800 rounded-md hover:bg-gray-200"
+									>
+										Cancel
+									</button>
+									<button
+										onClick={confirmDeleteNow}
+										className="px-3 py-1.5 bg-red-600 text-white rounded-md hover:bg-red-700"
+									>
+										Delete
+									</button>
+								</div>
+							</div>
+						</div>
+					)}
 
 					{/* Keyboard shortcuts help */}
 					<div className="mt-8 text-sm text-gray-500">
