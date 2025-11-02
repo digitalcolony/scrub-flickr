@@ -26,6 +26,7 @@ npm run dev
 ```
 
 ## Safety
+
 - Keep bulk delete confirm modal mandatory
 - Start with small batches in real accounts
 - Provide clear messaging for rate limit pauses
