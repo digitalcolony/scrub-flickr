@@ -52,13 +52,21 @@ export function AuthCallback() {
 				}
 
 				if (validation.hasAuthCode) {
-					// Complete authentication with authorization code
-					await completeAuth(params.code, params.state);
+					// Handle OAuth 1.0a vs OAuth 2.0 flow
+					if (validation.isOAuth1) {
+						// OAuth 1.0a: complete authentication with oauth_token and oauth_verifier
+						await completeAuth(params.oauth_token, params.oauth_verifier, params.state);
+					} else if (validation.isOAuth2) {
+						// OAuth 2.0: complete authentication with code and state
+						await completeAuth(params.code, params.oauth_verifier, params.state);
+					} else {
+						throw new Error("Unable to determine OAuth flow type");
+					}
 				} else {
 					setCallbackError({
 						type: "missing_code",
-						message: "No authorization code received from Flickr.",
-						details: "The callback did not include the required authorization code.",
+						message: "No authorization code or token received from Flickr.",
+						details: "The callback did not include the required authorization parameters.",
 					});
 				}
 			} catch (error) {

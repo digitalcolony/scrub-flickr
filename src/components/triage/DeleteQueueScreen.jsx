@@ -1,6 +1,6 @@
 import { usePhotoTriageStore } from "../../stores/photoTriageStore.js";
 import { useAuthStore } from "../../stores/authStore.js";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 /**
  * DeleteQueueScreen - Shows photos tagged for deletion
@@ -12,23 +12,51 @@ export function DeleteQueueScreen() {
 		getDeletedPhotoCount,
 		untagPhoto,
 		loadPhotos,
+		deletePhoto,
 		photos,
 		isLoadingPhotos,
 	} = usePhotoTriageStore();
-	const { user } = useAuthStore();
+	const { user, token } = useAuthStore();
+
+	const [isDeleting, setIsDeleting] = useState(false);
+	const [deletionProgress, setDeletionProgress] = useState({ current: 0, total: 0 });
 
 	const photosToDelete = getPhotosToDelete();
 	const deletedPhotoCount = getDeletedPhotoCount();
 
 	// Load photos if we have tags but no photos loaded
 	useEffect(() => {
-		if (user && deletedPhotoCount > 0 && photos.length === 0 && !isLoadingPhotos) {
-			loadPhotos(user.id);
+		if (user && token && deletedPhotoCount > 0 && photos.length === 0 && !isLoadingPhotos) {
+			loadPhotos(user.userId, token);
 		}
-	}, [user, deletedPhotoCount, photos.length, isLoadingPhotos, loadPhotos]);
+	}, [user, token, deletedPhotoCount, photos.length, isLoadingPhotos, loadPhotos]);
 
 	const handleRemoveFromQueue = (photoId) => {
 		untagPhoto(photoId);
+	};
+
+	const handleDeleteAll = async () => {
+		if (!user || !token || photosToDelete.length === 0) return;
+
+		setIsDeleting(true);
+		setDeletionProgress({ current: 0, total: photosToDelete.length });
+
+		for (let i = 0; i < photosToDelete.length; i++) {
+			const photo = photosToDelete[i];
+			setDeletionProgress({ current: i, total: photosToDelete.length });
+
+			try {
+				await deletePhoto(photo.id, token);
+			} catch (error) {
+				console.error(`Failed to delete photo ${photo.id}:`, error);
+			}
+
+			// Small delay to prevent overwhelming the API
+			await new Promise(resolve => setTimeout(resolve, 100));
+		}
+
+		setDeletionProgress({ current: photosToDelete.length, total: photosToDelete.length });
+		setIsDeleting(false);
 	};
 
 	return (
@@ -42,8 +70,18 @@ export function DeleteQueueScreen() {
 							<span className="text-sm text-gray-600">
 								{isLoadingPhotos
 									? "Loading..."
+									: isDeleting
+									? `Deleting ${deletionProgress.current}/${deletionProgress.total}...`
 									: `${photosToDelete.length} photos tagged for deletion`}
 							</span>
+							{photosToDelete.length > 0 && !isDeleting && (
+								<button
+									onClick={handleDeleteAll}
+									className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+								>
+									Delete All ({photosToDelete.length})
+								</button>
+							)}
 							<button
 								onClick={() => (window.location.href = "/triage")}
 								className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"

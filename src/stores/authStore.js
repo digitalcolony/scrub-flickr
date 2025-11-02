@@ -125,13 +125,13 @@ export const useAuthStore = create((set, get) => ({
 
 	/**
 	 * Complete OAuth authentication flow
-	 * Called from auth callback route with authorization code
+	 * Called from auth callback route with authorization parameters
 	 */
-	completeAuth: async (authCode, state) => {
+	completeAuth: async (authCode, oauthVerifier, state) => {
 		set({ isLoading: true });
 
 		try {
-			const result = await flickrAuthService.completeAuth(authCode, state);
+			const result = await flickrAuthService.completeAuth(authCode, oauthVerifier, state);
 
 			if (result.success) {
 				// Store token and user data

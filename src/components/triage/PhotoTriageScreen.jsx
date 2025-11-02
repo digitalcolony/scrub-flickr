@@ -7,7 +7,7 @@ import { useAuthStore } from "../../stores/authStore.js";
  * Features keyboard shortcuts, progress tracking, and responsive design
  */
 export function PhotoTriageScreen() {
-	const { user } = useAuthStore();
+	const { user, token } = useAuthStore();
 	const {
 		loadPhotos,
 		loadMorePhotos,
@@ -28,10 +28,10 @@ export function PhotoTriageScreen() {
 
 	// Load photos when component mounts
 	useEffect(() => {
-		if (user?.userId && stats.totalLoaded === 0) {
-			loadPhotos(user.userId);
+		if (user?.userId && token && stats.totalLoaded === 0) {
+			loadPhotos(user.userId, token);
 		}
-	}, [user?.userId, loadPhotos, stats.totalLoaded]);
+	}, [user?.userId, token, loadPhotos, stats.totalLoaded]);
 
 	// Keyboard event handler
 	const handleKeyPress = useCallback(
@@ -165,7 +165,7 @@ export function PhotoTriageScreen() {
 						<div className="space-x-2">
 							{stats.hasMorePhotos && (
 								<button
-									onClick={() => user?.userId && loadMorePhotos(user.userId)}
+									onClick={() => user?.userId && token && loadMorePhotos(user.userId, token)}
 									className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
 									disabled={isLoadingPhotos}
 								>
@@ -329,7 +329,7 @@ export function PhotoTriageScreen() {
 					{stats.untaggedCount < 5 && stats.hasMorePhotos && !isLoadingPhotos && (
 						<div className="mt-6">
 							<button
-								onClick={() => user?.userId && loadMorePhotos(user.userId)}
+								onClick={() => user?.userId && token && loadMorePhotos(user.userId, token)}
 								className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
 							>
 								Load More Photos

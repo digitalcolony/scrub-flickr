@@ -1,9 +1,11 @@
 # Step 3 Quick Start Guide
 
 ## What is Step 3?
+
 **Real Flickr API Integration** - Replace mock photo data with actual Flickr API calls to enable production functionality.
 
 ## Current Status
+
 ✅ **Phase 1**: Authentication system (mock)  
 ✅ **Phase 2**: Photo triage UI (mock photos)  
 🎯 **Phase 3**: Real API integration (starting now)
@@ -11,6 +13,7 @@
 ## Prerequisites
 
 ### 1. Flickr Developer Account
+
 You'll need to create a Flickr app to get API credentials:
 
 1. Go to https://www.flickr.com/services/apps/create/
@@ -22,6 +25,7 @@ You'll need to create a Flickr app to get API credentials:
 4. Save your **API Key** and **API Secret**
 
 ### 2. Environment Setup
+
 Create/update your `.env.local` file:
 
 ```bash
@@ -34,18 +38,21 @@ VITE_FLICKR_CALLBACK_URL=http://localhost:5173/auth/callback
 ## Development Approach
 
 ### Phase 1: Start Small 🔧
+
 1. **Replace mock authentication** with real OAuth flow
 2. **Test with your own Flickr account** (use test photos!)
 3. **Fetch 10-20 real photos** initially
 4. **Verify photos display correctly** in triage screen
 
 ### Phase 2: Add Core Features 📸
+
 1. **Implement real photo fetching** with pagination
 2. **Add photo metadata** (title, date, tags)
 3. **Test with larger photo libraries** (100+ photos)
 4. **Optimize loading performance**
 
 ### Phase 3: Enable Deletion 🗑️
+
 1. **Implement single photo deletion** (test carefully!)
 2. **Add bulk deletion** with progress tracking
 3. **Implement rate limiting** (3600 requests/hour)
@@ -54,12 +61,14 @@ VITE_FLICKR_CALLBACK_URL=http://localhost:5173/auth/callback
 ## Safety First! ⚠️
 
 ### Testing Strategy
+
 - **Use a test Flickr account** with photos you don't mind deleting
 - **Start with 5-10 test photos** to verify deletion works
 - **Never test with important photos** during development
 - **Always have backups** of any photos you test with
 
 ### Development Guidelines
+
 - Test authentication flow thoroughly before moving to deletion
 - Implement deletion confirmation dialogs
 - Add comprehensive error handling
@@ -86,6 +95,7 @@ git checkout -b 003-flickr-api
 ```
 
 ## Expected Timeline
+
 - **Week 1**: API client and authentication
 - **Week 2**: Photo fetching and display
 - **Week 3**: Delete functionality
@@ -94,7 +104,7 @@ git checkout -b 003-flickr-api
 ## Ready to Start?
 
 1. **Get Flickr API credentials** (see prerequisites above)
-2. **Update .env.local** with real credentials  
+2. **Update .env.local** with real credentials
 3. **Begin with authentication** (replace mock OAuth)
 4. **Test incrementally** (don't rush to deletion!)
 

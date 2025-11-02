@@ -28,8 +28,9 @@ export const usePhotoTriageStore = create(
 			/**
 			 * Load initial batch of photos
 			 * @param {string} userId - Flickr user ID
+			 * @param {Object} token - Authentication token with accessToken and accessTokenSecret
 			 */
-			async loadPhotos(userId) {
+			async loadPhotos(userId, token = null) {
 				const state = get();
 				if (state.isLoadingPhotos) return;
 
@@ -38,6 +39,8 @@ export const usePhotoTriageStore = create(
 				try {
 					const response = await flickrPhotoService.getUserPhotos({
 						userId,
+						accessToken: token?.accessToken,
+						accessTokenSecret: token?.accessTokenSecret,
 						page: 1,
 						perPage: state.photosPerPage,
 					});
@@ -55,7 +58,7 @@ export const usePhotoTriageStore = create(
 
 					// If all photos are tagged, load more
 					if (untaggedPhotos.length === 0 && response.pagination.page < response.pagination.pages) {
-						get().loadMorePhotos(userId);
+						get().loadMorePhotos(userId, token);
 					}
 				} catch (error) {
 					console.error("Error loading photos:", error);
@@ -69,8 +72,9 @@ export const usePhotoTriageStore = create(
 			/**
 			 * Load more photos from next page
 			 * @param {string} userId - Flickr user ID
+			 * @param {Object} token - Authentication token with accessToken and accessTokenSecret
 			 */
-			async loadMorePhotos(userId) {
+			async loadMorePhotos(userId, token = null) {
 				const state = get();
 				if (state.isLoadingPhotos || !state.hasMorePhotos) return;
 
@@ -79,6 +83,8 @@ export const usePhotoTriageStore = create(
 				try {
 					const response = await flickrPhotoService.getUserPhotos({
 						userId,
+						accessToken: token?.accessToken,
+						accessTokenSecret: token?.accessTokenSecret,
 						page: state.currentPage + 1,
 						perPage: state.photosPerPage,
 					});
@@ -215,6 +221,40 @@ export const usePhotoTriageStore = create(
 							? Math.round(((keepCount + deleteCount) / state.totalPhotos) * 100)
 							: 0,
 				};
+			},
+
+			/**
+			 * Actually delete a photo from Flickr
+			 * @param {string} photoId - Photo ID to delete
+			 * @param {Object} token - Authentication token with accessToken and accessTokenSecret
+			 * @returns {Promise<boolean>} Success status
+			 */
+			async deletePhoto(photoId, token) {
+				try {
+					const success = await flickrPhotoService.deletePhoto(
+						photoId,
+						token.accessToken,
+						token.accessTokenSecret
+					);
+
+					if (success) {
+						get().updatePhotoStatus(photoId, "delete-completed");
+						return true;
+					} else {
+						get().updatePhotoStatus(photoId, "delete-failed", {
+							error: "Deletion failed",
+							attempts: (get().deleteErrors[photoId]?.attempts || 0) + 1
+						});
+						return false;
+					}
+				} catch (error) {
+					console.error(`Error deleting photo ${photoId}:`, error);
+					get().updatePhotoStatus(photoId, "delete-failed", {
+						error: error.message,
+						attempts: (get().deleteErrors[photoId]?.attempts || 0) + 1
+					});
+					return false;
+				}
 			},
 
 			/**
