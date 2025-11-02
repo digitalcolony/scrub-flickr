@@ -1,132 +1,195 @@
-import CryptoJS from "crypto-js";
+import { flickrApiClient } from "./flickrApiClient.js";
 
 /**
- * FlickrAuthService handles OAuth 2.0 authentication with PKCE for Flickr API
- * Implements secure authentication flow with proper error handling
+ * FlickrAuthService handles OAuth 1.0a authentication for Flickr API
+ * Implements the complete OAuth flow with proper error handling
  */
 export class FlickrAuthService {
 	constructor() {
-		this.apiKey = import.meta.env.VITE_FLICKR_API_KEY;
-		this.apiSecret = import.meta.env.VITE_FLICKR_API_SECRET;
-		this.callbackUrl = import.meta.env.VITE_FLICKR_CALLBACK_URL;
+		this.apiClient = flickrApiClient;
 		this.permissions = import.meta.env.VITE_OAUTH_PERMISSIONS || "delete";
-
-		// Validate required environment variables
-		if (!this.apiKey || !this.apiSecret || !this.callbackUrl) {
-			throw new Error("Missing required Flickr API configuration. Check your .env.local file.");
-		}
 	}
 
 	/**
-	 * Generate PKCE (Proof Key for Code Exchange) parameters for secure OAuth flow
-	 * @returns {Object} Object containing codeVerifier and codeChallenge
-	 */
-	generatePKCE() {
-		// Generate cryptographically secure random string for code verifier
-		const codeVerifier = CryptoJS.lib.WordArray.random(32).toString(CryptoJS.enc.Base64url);
-
-		// Create SHA256 hash of code verifier for challenge
-		const codeChallenge = CryptoJS.SHA256(codeVerifier).toString(CryptoJS.enc.Base64url);
-
-		return { codeVerifier, codeChallenge };
-	}
-
-	/**
-	 * Generate cryptographically secure state parameter for CSRF protection
-	 * @returns {string} Random state string
-	 */
-	generateState() {
-		return CryptoJS.lib.WordArray.random(16).toString(CryptoJS.enc.Hex);
-	}
-
-	/**
-	 * Initiate OAuth authentication flow
+	 * Initiate OAuth 1.0a authentication flow
 	 * @param {Object} options - Authentication options
 	 * @param {string} options.permissions - Flickr permission level ('read', 'write', 'delete')
 	 * @returns {Promise<string>} Authorization URL for redirect
 	 */
-	async initiateAuth(options = {}) {
+	async initiateAuth(_options = {}) {
 		try {
-			const permissions = options.permissions || this.permissions;
+			// const permissions = options.permissions || this.permissions; // not currently used
 
-			// Generate PKCE parameters
-			const { codeVerifier, codeChallenge } = this.generatePKCE();
-			const state = this.generateState();
+			// Check if we have real API credentials
+			const hasRealCredentials =
+				this.apiClient.apiKey &&
+				this.apiClient.apiSecret &&
+				!this.apiClient.apiKey.includes("your_") &&
+				this.apiClient.apiKey.length > 10;
 
-			// Store parameters for callback verification
-			sessionStorage.setItem("oauth_code_verifier", codeVerifier);
-			sessionStorage.setItem("oauth_state", state);
-			sessionStorage.setItem("oauth_timestamp", Date.now().toString());
-
-			// DEV MODE: Simulate OAuth flow locally for testing
-			if (import.meta.env.DEV && window.location.hostname === "localhost") {
-				// Simulate the OAuth flow by redirecting to our callback with mock parameters
+			// DEV MODE: Use mock authentication only if we don't have real credentials
+			if (import.meta.env.DEV && window.location.hostname === "localhost" && !hasRealCredentials) {
+				const mockState = this.generateState();
 				const mockAuthCode = `mock_auth_code_${Date.now()}`;
-				const callbackUrl = `${this.callbackUrl}?code=${mockAuthCode}&state=${state}`;
 
-				console.log("🔧 [DEV MODE] Simulating OAuth redirect with mock auth code");
+				// Store mock state for validation
+				sessionStorage.setItem("oauth_state", mockState);
+				sessionStorage.setItem("oauth_timestamp", Date.now().toString());
+
+				const callbackUrl = `${this.apiClient.callbackUrl}?oauth_token=${mockAuthCode}&oauth_verifier=mock_verifier&state=${mockState}`;
+				console.log("🔧 [DEV MODE] Using mock OAuth flow");
 				return callbackUrl;
 			}
 
-			// PRODUCTION: Build real Flickr authorization URL
-			const authParams = new URLSearchParams({
-				response_type: "code",
-				client_id: this.apiKey,
-				redirect_uri: this.callbackUrl,
-				code_challenge: codeChallenge,
-				code_challenge_method: "S256",
-				perms: permissions,
-				state: state,
-				scope: "read", // Flickr specific scope
-			});
+			// PRODUCTION or DEV with real credentials: Real OAuth 1.0a flow
+			console.log("🔐 [REAL API] Starting OAuth 1.0a flow with Flickr");
 
-			const authUrl = `https://www.flickr.com/services/oauth/authorize?${authParams.toString()}`;
+			// Step 1: Get request token
+			const requestToken = await this.apiClient.getRequestToken();
 
-			return authUrl;
+			// Store request token data for step 3
+			sessionStorage.setItem("oauth_request_token", requestToken.token);
+			sessionStorage.setItem("oauth_request_token_secret", requestToken.tokenSecret);
+			sessionStorage.setItem("oauth_timestamp", Date.now().toString());
+
+			console.log("🔐 [REAL API] Request token obtained, redirecting to Flickr authorization");
+
+			// Step 2: Use authorization URL from server response
+			return requestToken.authorizeUrl;
 		} catch (error) {
 			throw new Error(`Failed to initiate authentication: ${error.message}`);
 		}
 	}
 
 	/**
-	 * Complete OAuth authentication flow by exchanging code for token
-	 * @param {string} authCode - Authorization code from callback
-	 * @param {string} state - State parameter from callback
+	 * Complete OAuth 1.0a authentication flow
+	 * @param {string} oauthToken - OAuth token from callback
+	 * @param {string} oauthVerifier - OAuth verifier from callback
+	 * @param {string} state - State parameter from callback (for mock flow)
 	 * @returns {Promise<Object>} Authentication result with user and token data
 	 */
-	async completeAuth(authCode, state) {
+	async completeAuth(oauthToken, oauthVerifier, state = null) {
 		try {
-			// Validate state parameter (CSRF protection)
-			const storedState = sessionStorage.getItem("oauth_state");
-			if (!storedState || state !== storedState) {
-				throw new Error("Invalid state parameter - possible CSRF attack");
-			}
-
-			// Check timestamp to prevent replay attacks (30 minute window)
+			// Check timestamp to prevent replay attacks (2 hour window for testing)
 			const timestamp = sessionStorage.getItem("oauth_timestamp");
-			if (!timestamp || Date.now() - parseInt(timestamp) > 30 * 60 * 1000) {
-				throw new Error("Authentication session expired");
+			const sessionAge = timestamp ? Date.now() - parseInt(timestamp) : null;
+			const maxAge = 2 * 60 * 60 * 1000; // 2 hours instead of 30 minutes
+
+			console.log("🔐 [AUTH] Completing authentication...", {
+				hasTimestamp: !!timestamp,
+				sessionAge: sessionAge ? Math.round(sessionAge / 1000) + "s" : "unknown",
+				maxAge: Math.round(maxAge / 1000) + "s",
+				oauthToken: oauthToken?.substring(0, 10) + "...",
+				hasVerifier: !!oauthVerifier,
+			});
+
+			if (!timestamp || sessionAge > maxAge) {
+				throw new Error(
+					`Authentication session expired (age: ${
+						sessionAge ? Math.round(sessionAge / 60000) + "m" : "unknown"
+					})`
+				);
 			}
 
-			// Get stored code verifier
-			const codeVerifier = sessionStorage.getItem("oauth_code_verifier");
-			if (!codeVerifier) {
-				throw new Error("Missing code verifier - invalid authentication state");
+			// Check if we have real API credentials
+			const hasRealCredentials =
+				this.apiClient.apiKey &&
+				this.apiClient.apiSecret &&
+				!this.apiClient.apiKey.includes("your_") &&
+				this.apiClient.apiKey.length > 10;
+
+			// DEV MODE: Handle mock authentication only if no real credentials
+			if (import.meta.env.DEV && oauthToken.startsWith("mock_") && !hasRealCredentials) {
+				// Validate mock state if provided
+				if (state) {
+					const storedState = sessionStorage.getItem("oauth_state");
+					if (!storedState || state !== storedState) {
+						throw new Error("Invalid state parameter - possible CSRF attack");
+					}
+				}
+
+				// Return mock authentication result
+				const mockResult = {
+					success: true,
+					token: {
+						accessToken: `mock_access_${Date.now()}`,
+						accessTokenSecret: `mock_secret_${Date.now()}`,
+						permissions: "delete",
+						issuedAt: Date.now(),
+						expiresAt: null, // OAuth 1.0a tokens don't typically expire
+					},
+					user: {
+						userId: "mock_user_12345@N67",
+						username: "test_user",
+						fullName: "Test User",
+						profileUrl: "https://www.flickr.com/people/test_user",
+						authenticatedAt: Date.now(),
+					},
+				};
+
+				this.clearSessionStorage();
+				return mockResult;
 			}
 
-			// Exchange authorization code for access token
-			const tokenResponse = await this.exchangeCodeForToken(authCode, codeVerifier);
+			// PRODUCTION or DEV with real credentials: Real OAuth 1.0a flow
+			console.log("🔐 [REAL API] Processing real OAuth callback");
 
-			// Fetch user profile information
-			const userInfo = await this.getUserInfo(tokenResponse);
+			// Get stored request token data
+			const requestToken = sessionStorage.getItem("oauth_request_token");
+			const requestTokenSecret = sessionStorage.getItem("oauth_request_token_secret");
+
+			console.log("🔐 [AUTH] Token validation:", {
+				hasRequestToken: !!requestToken,
+				hasRequestTokenSecret: !!requestTokenSecret,
+				requestTokenMatch: requestToken === oauthToken,
+				storedToken: requestToken?.substring(0, 10) + "...",
+				receivedToken: oauthToken?.substring(0, 10) + "...",
+			});
+
+			if (!requestToken || !requestTokenSecret) {
+				throw new Error("Missing request token data - invalid authentication state");
+			}
+
+			// Verify the returned token matches our stored request token
+			if (oauthToken !== requestToken) {
+				throw new Error(
+					`OAuth token mismatch - stored: ${requestToken?.substring(
+						0,
+						10
+					)}..., received: ${oauthToken?.substring(0, 10)}...`
+				);
+			}
+
+			console.log("🔐 [REAL API] Exchanging request token for access token...");
+
+			// Step 3: Exchange request token for access token
+			const accessTokenData = await this.apiClient.getAccessToken(
+				requestToken,
+				requestTokenSecret,
+				oauthVerifier
+			);
+
+			console.log("🔐 [REAL API] Access token obtained successfully");
 
 			// Clean up session storage
 			this.clearSessionStorage();
 
 			return {
 				success: true,
-				token: tokenResponse,
-				user: userInfo,
+				token: {
+					accessToken: accessTokenData.accessToken,
+					accessTokenSecret: accessTokenData.accessTokenSecret,
+					permissions: "delete",
+					issuedAt: Date.now(),
+					expiresAt: null, // OAuth 1.0a tokens don't typically expire
+				},
+				user: {
+					userId: accessTokenData.userId,
+					username: accessTokenData.username,
+					fullName: accessTokenData.fullname || accessTokenData.username,
+					profileUrl: `https://www.flickr.com/people/${accessTokenData.userId}`,
+					authenticatedAt: Date.now(),
+				},
 			};
 		} catch (error) {
 			// Clean up session storage on error
@@ -136,73 +199,13 @@ export class FlickrAuthService {
 	}
 
 	/**
-	 * Exchange authorization code for access token
-	 * @param {string} authCode - Authorization code
-	 * @param {string} codeVerifier - PKCE code verifier
-	 * @returns {Promise<Object>} Token response object
-	 * @private
-	 */
-	async exchangeCodeForToken(AUTH_CODE, CODE_VERIFIER) {
-		// Note: Flickr uses OAuth 1.0a, not OAuth 2.0 with PKCE
-		// This is a MOCK implementation for testing purposes
-
-		// Simulate API call delay
-		await new Promise((resolve) => setTimeout(resolve, 1000));
-
-		// For testing: simulate successful token exchange
-		if (import.meta.env.DEV) {
-			return {
-				accessToken: `mock_token_${Date.now()}`,
-				tokenSecret: `mock_secret_${Date.now()}`,
-				permissions: "delete",
-				issuedAt: Date.now(),
-				expiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
-			};
-		}
-
-		// TODO: Implement actual Flickr OAuth 1.0a token exchange
-		// This would involve creating OAuth signatures and making the proper API call
-		// Parameters would include: AUTH_CODE, CODE_VERIFIER, this.apiKey, this.callbackUrl
-		throw new Error("Token exchange not yet implemented - requires Flickr OAuth 1.0a integration");
-	}
-
-	/**
-	 * Fetch user information from Flickr API
-	 * @param {Object} tokenData - Token information
-	 * @returns {Promise<Object>} User profile data
-	 * @private
-	 */
-	async getUserInfo(TOKEN_DATA) {
-		// MOCK implementation for testing purposes
-
-		// Simulate API call delay
-		await new Promise((resolve) => setTimeout(resolve, 500));
-
-		// For testing: return mock user data
-		if (import.meta.env.DEV) {
-			return {
-				userId: "mock_user_12345@N67",
-				username: "test_user",
-				fullName: "Test User",
-				profileUrl: "https://www.flickr.com/people/test_user",
-				authenticatedAt: Date.now(),
-				lastActivity: Date.now(),
-			};
-		}
-
-		// TODO: Implement user info fetching using Flickr API
-		// This would make a call to flickr.people.getInfo or similar
-		throw new Error("User info fetching not yet implemented");
-	}
-
-	/**
 	 * Validate if stored token is still valid
 	 * @param {Object} token - Token to validate
 	 * @returns {Promise<boolean>} True if token is valid
 	 */
 	async validateToken(token) {
 		try {
-			if (!token || !token.accessToken) {
+			if (!token || !token.accessToken || !token.accessTokenSecret) {
 				return false;
 			}
 
@@ -211,12 +214,26 @@ export class FlickrAuthService {
 				return false;
 			}
 
-			// TODO: Make test API call to verify token is still active
-			// For now, assume token is valid if it exists and hasn't expired
-			return true;
+			// For mock tokens in development, assume they're valid
+			if (import.meta.env.DEV && token.accessToken.startsWith("mock_")) {
+				return true;
+			}
+
+			// Test token with real API call
+			return await this.apiClient.testToken(token.accessToken, token.accessTokenSecret);
 		} catch {
 			return false;
 		}
+	}
+
+	/**
+	 * Generate cryptographically secure state parameter for CSRF protection (used in dev mode)
+	 * @returns {string} Random state string
+	 */
+	generateState() {
+		return Array.from(crypto.getRandomValues(new Uint8Array(16)))
+			.map((b) => b.toString(16).padStart(2, "0"))
+			.join("");
 	}
 
 	/**
@@ -224,7 +241,8 @@ export class FlickrAuthService {
 	 * @private
 	 */
 	clearSessionStorage() {
-		sessionStorage.removeItem("oauth_code_verifier");
+		sessionStorage.removeItem("oauth_request_token");
+		sessionStorage.removeItem("oauth_request_token_secret");
 		sessionStorage.removeItem("oauth_state");
 		sessionStorage.removeItem("oauth_timestamp");
 	}

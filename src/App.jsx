@@ -1,11 +1,28 @@
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import { useEffect } from "react";
 import { useAuthStore } from "./stores/authStore.js";
 import { AuthCallback } from "./components/auth/AuthCallback.jsx";
+import { ProtectedRoute } from "./components/auth/ProtectedRoute.jsx";
 import { PhotoTriageScreen } from "./components/triage/PhotoTriageScreen.jsx";
 import { DeleteQueueScreen } from "./components/triage/DeleteQueueScreen.jsx";
 
 function HomePage() {
-	const { isAuthenticated, user, startAuth, logout, isLoading, error } = useAuthStore();
+	const { isAuthenticated, user, startAuth, logout, isLoading, error, initializeAuth, status } =
+		useAuthStore();
+
+	// Ensure we restore any persisted auth session when landing on Home
+	useEffect(() => {
+		// Only attempt init when we're clearly unauthenticated to avoid loops
+		if (status === "unauthenticated") {
+			try {
+				initializeAuth();
+			} catch {
+				// non-fatal; UI will show connect state
+			}
+		}
+		// run once per mount unless status changes from unauthenticated
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [status]);
 
 	return (
 		<div className="min-h-screen bg-gray-50 p-8">
@@ -89,8 +106,22 @@ function App() {
 			<Routes>
 				<Route path="/" element={<HomePage />} />
 				<Route path="/auth/callback" element={<AuthCallback />} />
-				<Route path="/triage" element={<PhotoTriageScreen />} />
-				<Route path="/delete-queue" element={<DeleteQueueScreen />} />
+				<Route
+					path="/triage"
+					element={
+						<ProtectedRoute>
+							<PhotoTriageScreen />
+						</ProtectedRoute>
+					}
+				/>
+				<Route
+					path="/delete-queue"
+					element={
+						<ProtectedRoute>
+							<DeleteQueueScreen />
+						</ProtectedRoute>
+					}
+				/>
 			</Routes>
 		</Router>
 	);

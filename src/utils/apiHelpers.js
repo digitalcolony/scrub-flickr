@@ -192,8 +192,9 @@ export function parseUrlParams(url = window.location.href) {
 export function validateCallbackParams(params) {
 	const errors = [];
 
-	if (!params.code && !params.error) {
-		errors.push("Missing authorization code or error parameter");
+	// OAuth 1.0a uses oauth_token and oauth_verifier instead of code
+	if (!params.oauth_token && !params.code && !params.error) {
+		errors.push("Missing oauth_token, authorization code, or error parameter");
 	}
 
 	if (params.error) {
@@ -204,15 +205,24 @@ export function validateCallbackParams(params) {
 		);
 	}
 
-	if (!params.state) {
-		errors.push("Missing state parameter");
+	// For OAuth 1.0a, oauth_verifier is required (except in mock mode)
+	if (params.oauth_token && !params.oauth_verifier && !params.oauth_token.startsWith("mock_")) {
+		errors.push("Missing oauth_verifier parameter");
+	}
+
+	// State is optional for OAuth 1.0a but required for OAuth 2.0
+	// Only validate state if it's present or if using code parameter (OAuth 2.0)
+	if (params.code && !params.state) {
+		errors.push("Missing state parameter for OAuth 2.0 flow");
 	}
 
 	return {
 		isValid: errors.length === 0,
 		errors,
-		hasAuthCode: !!params.code,
+		hasAuthCode: !!(params.code || params.oauth_token),
 		hasError: !!params.error,
+		isOAuth1: !!params.oauth_token,
+		isOAuth2: !!params.code,
 	};
 }
 

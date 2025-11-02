@@ -28,16 +28,31 @@ export const usePhotoTriageStore = create(
 			/**
 			 * Load initial batch of photos
 			 * @param {string} userId - Flickr user ID
+			 * @param {Object} token - Authentication token with accessToken and accessTokenSecret
 			 */
-			async loadPhotos(userId) {
+			async loadPhotos(userId, token = null) {
 				const state = get();
 				if (state.isLoadingPhotos) return;
+
+				console.log("📸 [STORE DEBUG] loadPhotos called with:", {
+					userId,
+					token: token
+						? {
+								hasAccessToken: !!token.accessToken,
+								hasAccessTokenSecret: !!token.accessTokenSecret,
+								accessTokenType: typeof token.accessToken,
+								accessTokenPrefix: token.accessToken?.substring(0, 10) + "...",
+						  }
+						: null,
+				});
 
 				set({ isLoadingPhotos: true, loadingError: null });
 
 				try {
 					const response = await flickrPhotoService.getUserPhotos({
 						userId,
+						accessToken: token?.accessToken,
+						accessTokenSecret: token?.accessTokenSecret,
 						page: 1,
 						perPage: state.photosPerPage,
 					});
@@ -55,7 +70,7 @@ export const usePhotoTriageStore = create(
 
 					// If all photos are tagged, load more
 					if (untaggedPhotos.length === 0 && response.pagination.page < response.pagination.pages) {
-						get().loadMorePhotos(userId);
+						get().loadMorePhotos(userId, token);
 					}
 				} catch (error) {
 					console.error("Error loading photos:", error);
@@ -69,16 +84,43 @@ export const usePhotoTriageStore = create(
 			/**
 			 * Load more photos from next page
 			 * @param {string} userId - Flickr user ID
+			 * @param {Object} token - Authentication token with accessToken and accessTokenSecret
 			 */
-			async loadMorePhotos(userId) {
+			async loadMorePhotos(userId, token = null) {
 				const state = get();
-				if (state.isLoadingPhotos || !state.hasMorePhotos) return;
+
+				console.log("📚 [STORE DEBUG] loadMorePhotos called with:", {
+					userId,
+					isLoadingPhotos: state.isLoadingPhotos,
+					hasMorePhotos: state.hasMorePhotos,
+					currentPage: state.currentPage,
+					totalPhotos: state.totalPhotos,
+					loadedPhotos: state.photos.length,
+					token: token
+						? {
+								hasAccessToken: !!token.accessToken,
+								hasAccessTokenSecret: !!token.accessTokenSecret,
+								accessTokenType: typeof token.accessToken,
+								accessTokenPrefix: token.accessToken?.substring(0, 10) + "...",
+						  }
+						: null,
+				});
+
+				if (state.isLoadingPhotos || !state.hasMorePhotos) {
+					console.log("⏹️ [STORE DEBUG] loadMorePhotos aborted:", {
+						isLoadingPhotos: state.isLoadingPhotos,
+						hasMorePhotos: state.hasMorePhotos,
+					});
+					return;
+				}
 
 				set({ isLoadingPhotos: true });
 
 				try {
 					const response = await flickrPhotoService.getUserPhotos({
 						userId,
+						accessToken: token?.accessToken,
+						accessTokenSecret: token?.accessTokenSecret,
 						page: state.currentPage + 1,
 						perPage: state.photosPerPage,
 					});
@@ -197,24 +239,64 @@ export const usePhotoTriageStore = create(
 			getTriageStats() {
 				const state = get();
 				const totalLoaded = state.photos.length;
-				const keepCount = Object.values(state.photoTags).filter((tag) => tag === "keep").length;
-				const deleteCount = Object.values(state.photoTags).filter((tag) =>
-					tag.startsWith("delete")
-				).length;
-				const untaggedCount = totalLoaded - keepCount - deleteCount;
+				const tags = Object.values(state.photoTags);
+				const keepCount = tags.filter((tag) => tag === "keep").length;
+				const deletePendingCount = tags.filter((tag) => tag === "delete-pending").length;
+				const deleteCompletedCount = tags.filter((tag) => tag === "delete-completed").length;
+				const deleteFailedCount = tags.filter((tag) => tag === "delete-failed").length;
+				const reviewedCount =
+					keepCount + deletePendingCount + deleteCompletedCount + deleteFailedCount;
+				const untaggedCount = totalLoaded - reviewedCount;
 
 				return {
 					totalLoaded,
 					totalPhotos: state.totalPhotos,
 					keepCount,
-					deleteCount,
+					// For UI queue badges, use pending deletions only
+					deleteCount: deletePendingCount,
+					deletePendingCount,
+					deleteCompletedCount,
+					deleteFailedCount,
+					deleteTotalCount: deletePendingCount + deleteCompletedCount + deleteFailedCount,
 					untaggedCount,
 					hasMorePhotos: state.hasMorePhotos,
 					progressPercent:
-						state.totalPhotos > 0
-							? Math.round(((keepCount + deleteCount) / state.totalPhotos) * 100)
-							: 0,
+						state.totalPhotos > 0 ? Math.round((reviewedCount / state.totalPhotos) * 100) : 0,
 				};
+			},
+
+			/**
+			 * Actually delete a photo from Flickr
+			 * @param {string} photoId - Photo ID to delete
+			 * @param {Object} token - Authentication token with accessToken and accessTokenSecret
+			 * @returns {Promise<boolean>} Success status
+			 */
+			async deletePhoto(photoId, token) {
+				try {
+					const success = await flickrPhotoService.deletePhoto(
+						photoId,
+						token.accessToken,
+						token.accessTokenSecret
+					);
+
+					if (success) {
+						get().updatePhotoStatus(photoId, "delete-completed");
+						return true;
+					} else {
+						get().updatePhotoStatus(photoId, "delete-failed", {
+							error: "Deletion failed",
+							attempts: (get().deleteErrors[photoId]?.attempts || 0) + 1,
+						});
+						return false;
+					}
+				} catch (error) {
+					console.error(`Error deleting photo ${photoId}:`, error);
+					get().updatePhotoStatus(photoId, "delete-failed", {
+						error: error.message,
+						attempts: (get().deleteErrors[photoId]?.attempts || 0) + 1,
+					});
+					return false;
+				}
 			},
 
 			/**

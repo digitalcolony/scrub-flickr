@@ -7,7 +7,7 @@ import { useAuthStore } from "../../stores/authStore.js";
  * Features keyboard shortcuts, progress tracking, and responsive design
  */
 export function PhotoTriageScreen() {
-	const { user } = useAuthStore();
+	const { user, token, status, isLoading, initializeAuth, logout } = useAuthStore();
 	const {
 		loadPhotos,
 		loadMorePhotos,
@@ -22,16 +22,120 @@ export function PhotoTriageScreen() {
 
 	const [imageLoading, setImageLoading] = useState(false);
 	const [imageError, setImageError] = useState(false);
+	const [authInitialized, setAuthInitialized] = useState(false);
 
 	const currentPhoto = getCurrentPhoto();
 	const stats = getTriageStats();
 
+	// Debug current state
+	console.log("📊 [COMPONENT DEBUG] PhotoTriageScreen render:", {
+		hasCurrentPhoto: !!currentPhoto,
+		isLoadingPhotos,
+		loadingError,
+		stats: {
+			totalLoaded: stats.totalLoaded,
+			hasMorePhotos: stats.hasMorePhotos,
+			keepCount: stats.keepCount,
+			deleteCount: stats.deleteCount,
+			untaggedCount: stats.untaggedCount,
+		},
+		user: user ? { userId: user.userId, username: user.username } : null,
+		hasToken: !!token,
+		authStatus: status,
+		isAuthLoading: isLoading,
+		authInitialized,
+	});
+
+	// Mount/unmount diagnostics
+	useEffect(() => {
+		console.log("🧩 [COMPONENT DEBUG] PhotoTriageScreen mounted");
+		return () => console.log("🧹 [COMPONENT DEBUG] PhotoTriageScreen unmounted");
+	}, []);
+
+	// Debug localStorage
+	console.log("💾 [STORAGE DEBUG] localStorage auth data:", {
+		flickrScrubAuth: localStorage.getItem("flickr-scrub-auth"),
+		authStorage: localStorage.getItem("auth-storage"),
+		photoStorage: localStorage.getItem("photo-triage-storage"),
+	});
+
+	// Debug stored auth data in detail
+	try {
+		const storedAuth = localStorage.getItem("flickr-scrub-auth");
+		if (storedAuth) {
+			const authData = JSON.parse(storedAuth);
+			console.log("🔍 [DETAILED AUTH DEBUG]", {
+				version: authData.version,
+				timestamp: authData.timestamp,
+				timestampAge: authData.timestamp ? Date.now() - authData.timestamp : null,
+				token: {
+					hasAccessToken: !!authData.token?.accessToken,
+					issuedAt: authData.token?.issuedAt,
+					expiresAt: authData.token?.expiresAt,
+					tokenAge: authData.token?.issuedAt ? Date.now() - authData.token.issuedAt : null,
+				},
+				user: {
+					userId: authData.user?.userId,
+					username: authData.user?.username,
+					authenticatedAt: authData.user?.authenticatedAt,
+					sessionAge: authData.user?.authenticatedAt
+						? Date.now() - authData.user.authenticatedAt
+						: null,
+					sessionAgeHours: authData.user?.authenticatedAt
+						? (Date.now() - authData.user.authenticatedAt) / (1000 * 60 * 60)
+						: null,
+				},
+			});
+		}
+	} catch (e) {
+		console.log("❌ [AUTH DEBUG] Error parsing stored auth:", e);
+	}
+
+	// Initialize auth on component mount if needed
+	useEffect(() => {
+		if (!authInitialized && !isLoading && status === "unauthenticated") {
+			console.log("🔄 [AUTH DEBUG] Initializing auth on component mount...");
+			initializeAuth();
+			setAuthInitialized(true);
+		}
+	}, [authInitialized, isLoading, status, initializeAuth]);
+
+	// Fallback: if status says token_expired but storage is empty, normalize to unauthenticated
+	useEffect(() => {
+		const hasStored = !!localStorage.getItem("flickr-scrub-auth");
+		if (status === "token_expired" && !hasStored) {
+			console.warn(
+				"[AUTH DEBUG] token_expired with empty storage → normalizing to unauthenticated"
+			);
+			// Prefer a clean unauthenticated state
+			useAuthStore.setState({
+				user: null,
+				token: null,
+				status: "unauthenticated",
+				error: null,
+				isLoading: false,
+			});
+		}
+	}, [status]);
+
 	// Load photos when component mounts
 	useEffect(() => {
-		if (user?.userId && stats.totalLoaded === 0) {
-			loadPhotos(user.userId);
+		if (user?.userId && token && stats.totalLoaded === 0) {
+			console.log("🎯 [COMPONENT DEBUG] Calling loadPhotos from triage mount", {
+				userId: user.userId,
+				hasToken: !!token,
+				hasSecret: !!token?.accessTokenSecret,
+				totalLoaded: stats.totalLoaded,
+			});
+			loadPhotos(user.userId, token);
+		} else {
+			console.log("⏳ [COMPONENT DEBUG] loadPhotos not called", {
+				hasUserId: !!user?.userId,
+				hasToken: !!token,
+				totalLoaded: stats.totalLoaded,
+			});
 		}
-	}, [user?.userId, loadPhotos, stats.totalLoaded]);
+	}, [user?.userId, token, loadPhotos, stats.totalLoaded]);
 
 	// Keyboard event handler
 	const handleKeyPress = useCallback(
@@ -91,6 +195,89 @@ export function PhotoTriageScreen() {
 			setImageError(false);
 		}
 	}, [currentPhoto?.url]);
+
+	// Authentication Guard - show loading while auth initializes, then check auth status
+	// Only block when not authenticated; if authenticated, don't let generic isLoading stall the screen
+	if (
+		status !== "authenticated" &&
+		(isLoading || (!authInitialized && status === "unauthenticated"))
+	) {
+		return (
+			<div className="min-h-screen bg-gray-50 flex items-center justify-center">
+				<div className="text-center">
+					<div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+					<p className="text-gray-600">Checking authentication...</p>
+				</div>
+			</div>
+		);
+	}
+
+	if (!user || !token || status !== "authenticated") {
+		return (
+			<div className="min-h-screen bg-gray-50 flex items-center justify-center">
+				<div className="text-center max-w-md">
+					<div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
+						<h2 className="text-lg font-semibold text-yellow-800 mb-2">Authentication Required</h2>
+						<p className="text-yellow-700 mb-4">
+							You need to sign in with Flickr to access photo triage.
+						</p>
+						<div className="text-sm text-yellow-600 mb-4">
+							Status: {status} | User: {user ? "✓" : "✗"} | Token: {token ? "✓" : "✗"}
+						</div>
+						<div className="space-x-2">
+							<button
+								onClick={() => (window.location.href = "/")}
+								className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+							>
+								Go to Home & Sign In
+							</button>
+							<button
+								onClick={() => {
+									console.log("🔄 [AUTH DEBUG] Manual initializeAuth triggered");
+									// Force clear localStorage first
+									localStorage.removeItem("flickr-scrub-auth");
+									// Then reinitialize auth
+									initializeAuth();
+								}}
+								className="px-3 py-1 bg-gray-500 text-white text-sm rounded hover:bg-gray-600"
+							>
+								Retry Auth
+							</button>
+							<button
+								onClick={() => {
+									console.log("🔨 [AUTH DEBUG] Force reset to unauthenticated state");
+									// Clear all storage
+									localStorage.removeItem("flickr-scrub-auth");
+									// Directly set auth store state
+									const authStore = useAuthStore.getState();
+									authStore.user = null;
+									authStore.token = null;
+									authStore.status = "unauthenticated";
+									authStore.isLoading = false;
+									authStore.error = null;
+									// Force re-render
+									window.location.reload();
+								}}
+								className="px-3 py-1 bg-purple-500 text-white text-sm rounded hover:bg-purple-600"
+							>
+								Force Reset
+							</button>
+							<button
+								onClick={async () => {
+									console.log("🧹 [AUTH DEBUG] Clearing expired token and resetting auth state...");
+									await logout(); // This clears localStorage and resets auth state
+									window.location.href = "/";
+								}}
+								className="px-3 py-1 bg-red-500 text-white text-sm rounded hover:bg-red-600"
+							>
+								Clear & Restart
+							</button>
+						</div>
+					</div>
+				</div>
+			</div>
+		);
+	}
 
 	// Handle action buttons
 	const handleKeepPhoto = () => {
@@ -163,9 +350,36 @@ export function PhotoTriageScreen() {
 							<p>🗑️ Tagged for deletion: {stats.deleteCount} photos</p>
 						</div>
 						<div className="space-x-2">
+							{/* Debug Authentication Button */}
+							<button
+								onClick={() => {
+									console.log("🔍 [AUTH DEBUG] Manual auth check triggered");
+									console.log("🔍 [AUTH DEBUG] Current auth state:", useAuthStore.getState());
+									console.log("🔍 [AUTH DEBUG] Calling initializeAuth...");
+									useAuthStore.getState().initializeAuth();
+								}}
+								className="px-3 py-1 bg-gray-500 text-white text-sm rounded hover:bg-gray-600"
+							>
+								Debug Auth
+							</button>
+
 							{stats.hasMorePhotos && (
 								<button
-									onClick={() => user?.userId && loadMorePhotos(user.userId)}
+									onClick={() => {
+										console.log("🔘 [BUTTON DEBUG] Load More Photos clicked", {
+											hasUserId: !!user?.userId,
+											hasToken: !!token,
+											userId: user?.userId,
+											tokenType: typeof token,
+											isLoadingPhotos,
+										});
+										if (user?.userId && token) {
+											console.log("🚀 [BUTTON DEBUG] Calling loadMorePhotos...");
+											loadMorePhotos(user.userId, token);
+										} else {
+											console.log("❌ [BUTTON DEBUG] Missing userId or token");
+										}
+									}}
 									className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
 									disabled={isLoadingPhotos}
 								>
@@ -329,7 +543,7 @@ export function PhotoTriageScreen() {
 					{stats.untaggedCount < 5 && stats.hasMorePhotos && !isLoadingPhotos && (
 						<div className="mt-6">
 							<button
-								onClick={() => user?.userId && loadMorePhotos(user.userId)}
+								onClick={() => user?.userId && token && loadMorePhotos(user.userId, token)}
 								className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
 							>
 								Load More Photos

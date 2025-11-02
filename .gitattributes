@@ -1,0 +1,20 @@
+# Normalize text files to LF in repo, platform-specific on checkout if needed
+* text=auto eol=lf
+
+# Keep shell scripts LF
+*.sh text eol=lf
+
+# Windows scripts CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Images/binaries - no EOL conversion
+*.png -text
+*.jpg -text
+*.jpeg -text
+*.gif -text
+*.svg -text
+*.ico -text
+*.pdf -text
+*.zip -text

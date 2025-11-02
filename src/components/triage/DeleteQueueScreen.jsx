@@ -1,6 +1,6 @@
 import { usePhotoTriageStore } from "../../stores/photoTriageStore.js";
 import { useAuthStore } from "../../stores/authStore.js";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 /**
  * DeleteQueueScreen - Shows photos tagged for deletion
@@ -12,23 +12,68 @@ export function DeleteQueueScreen() {
 		getDeletedPhotoCount,
 		untagPhoto,
 		loadPhotos,
+		deletePhoto,
 		photos,
 		isLoadingPhotos,
 	} = usePhotoTriageStore();
-	const { user } = useAuthStore();
+	const { user, token } = useAuthStore();
+
+	const [isDeleting, setIsDeleting] = useState(false);
+	const [deletingIds, setDeletingIds] = useState(new Set());
+	const [deletionProgress, setDeletionProgress] = useState({ current: 0, total: 0 });
 
 	const photosToDelete = getPhotosToDelete();
 	const deletedPhotoCount = getDeletedPhotoCount();
 
 	// Load photos if we have tags but no photos loaded
 	useEffect(() => {
-		if (user && deletedPhotoCount > 0 && photos.length === 0 && !isLoadingPhotos) {
-			loadPhotos(user.id);
+		if (user && token && deletedPhotoCount > 0 && photos.length === 0 && !isLoadingPhotos) {
+			loadPhotos(user.userId, token);
 		}
-	}, [user, deletedPhotoCount, photos.length, isLoadingPhotos, loadPhotos]);
+	}, [user, token, deletedPhotoCount, photos.length, isLoadingPhotos, loadPhotos]);
 
 	const handleRemoveFromQueue = (photoId) => {
 		untagPhoto(photoId);
+	};
+
+	const handleDeleteOne = async (photoId) => {
+		if (!user || !token) return;
+		setDeletingIds((prev) => new Set(prev).add(photoId));
+		try {
+			await deletePhoto(photoId, token);
+		} catch (error) {
+			console.error(`Failed to delete photo ${photoId}:`, error);
+		} finally {
+			setDeletingIds((prev) => {
+				const next = new Set(prev);
+				next.delete(photoId);
+				return next;
+			});
+		}
+	};
+
+	const handleDeleteAll = async () => {
+		if (!user || !token || photosToDelete.length === 0) return;
+
+		setIsDeleting(true);
+		setDeletionProgress({ current: 0, total: photosToDelete.length });
+
+		for (let i = 0; i < photosToDelete.length; i++) {
+			const photo = photosToDelete[i];
+			setDeletionProgress({ current: i, total: photosToDelete.length });
+
+			try {
+				await deletePhoto(photo.id, token);
+			} catch (error) {
+				console.error(`Failed to delete photo ${photo.id}:`, error);
+			}
+
+			// Small delay to prevent overwhelming the API
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+
+		setDeletionProgress({ current: photosToDelete.length, total: photosToDelete.length });
+		setIsDeleting(false);
 	};
 
 	return (
@@ -42,8 +87,18 @@ export function DeleteQueueScreen() {
 							<span className="text-sm text-gray-600">
 								{isLoadingPhotos
 									? "Loading..."
+									: isDeleting
+									? `Deleting ${deletionProgress.current}/${deletionProgress.total}...`
 									: `${photosToDelete.length} photos tagged for deletion`}
 							</span>
+							{photosToDelete.length > 0 && !isDeleting && (
+								<button
+									onClick={handleDeleteAll}
+									className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+								>
+									Delete All ({photosToDelete.length})
+								</button>
+							)}
 							<button
 								onClick={() => (window.location.href = "/triage")}
 								className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
@@ -92,11 +147,11 @@ export function DeleteQueueScreen() {
 				) : (
 					<div>
 						{/* Stats */}
-						<div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
-							<h3 className="font-semibold text-yellow-800 mb-2">⚠️ Coming Soon: Bulk Deletion</h3>
-							<p className="text-yellow-700 text-sm">
-								The ability to delete photos from Flickr will be implemented in the next phase. For
-								now, you can review and manage your delete queue.
+						<div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+							<h3 className="font-semibold text-blue-800 mb-2">Manage Delete Queue</h3>
+							<p className="text-blue-700 text-sm">
+								Select individual photos to delete immediately, or use "Delete All" to process the
+								entire queue.
 							</p>
 						</div>
 
@@ -110,12 +165,21 @@ export function DeleteQueueScreen() {
 										className="w-full h-32 object-cover rounded-lg shadow"
 									/>
 									<div className="absolute inset-0 bg-red-500 bg-opacity-20 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-										<button
-											onClick={() => handleRemoveFromQueue(photo.id)}
-											className="px-2 py-1 bg-white text-red-600 text-xs rounded hover:bg-gray-100"
-										>
-											Remove
-										</button>
+										<div className="flex space-x-2">
+											<button
+												onClick={() => handleRemoveFromQueue(photo.id)}
+												className="px-2 py-1 bg-white text-red-600 text-xs rounded hover:bg-gray-100"
+											>
+												Remove
+											</button>
+											<button
+												onClick={() => handleDeleteOne(photo.id)}
+												disabled={deletingIds.has(photo.id) || isDeleting}
+												className="px-2 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700 disabled:opacity-50"
+											>
+												{deletingIds.has(photo.id) ? "Deleting…" : "Delete Now"}
+											</button>
+										</div>
 									</div>
 									<div className="absolute top-2 right-2">
 										<span className="inline-block px-2 py-1 bg-red-600 text-white text-xs rounded">
@@ -133,15 +197,17 @@ export function DeleteQueueScreen() {
 									Ready to Delete {photosToDelete.length} Photos?
 								</h3>
 								<p className="text-gray-600 mb-4">
-									This feature will be available in the next update. You can review your selections
-									above.
+									This will permanently delete the selected photos.
 								</p>
 								<div className="space-x-4">
 									<button
-										disabled
-										className="px-6 py-3 bg-gray-400 text-white rounded-lg cursor-not-allowed"
+										onClick={handleDeleteAll}
+										disabled={isDeleting || photosToDelete.length === 0 || !user || !token}
+										className="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
 									>
-										Delete All (Coming Soon)
+										{isDeleting
+											? `Deleting ${deletionProgress.current}/${deletionProgress.total}…`
+											: `Delete All (${photosToDelete.length})`}
 									</button>
 									<button
 										onClick={() => (window.location.href = "/triage")}

@@ -1,13 +1,16 @@
+import { flickrApiClient } from "./flickrApiClient.js";
+import { rateLimiter } from "./rateLimiter.js";
+
 /**
  * FlickrPhotoService handles fetching and managing photos from Flickr API
  * Provides photo data for the triage functionality
  */
 export class FlickrPhotoService {
 	constructor() {
-		this.apiKey = import.meta.env.VITE_FLICKR_API_KEY;
+		this.apiClient = flickrApiClient;
 		this.baseUrl = "https://www.flickr.com/services/rest/";
 
-		if (!this.apiKey) {
+		if (!this.apiClient.apiKey) {
 			console.warn("FlickrPhotoService: API key not configured - using mock data");
 		}
 	}
@@ -16,6 +19,8 @@ export class FlickrPhotoService {
 	 * Fetch user's photos from Flickr
 	 * @param {Object} options - Fetch options
 	 * @param {string} options.userId - Flickr user ID
+	 * @param {string} options.accessToken - OAuth access token
+	 * @param {string} options.accessTokenSecret - OAuth access token secret
 	 * @param {number} options.page - Page number (default: 1)
 	 * @param {number} options.perPage - Photos per page (default: 50)
 	 * @param {string} options.sort - Sort order (default: 'date-posted-desc')
@@ -23,39 +28,60 @@ export class FlickrPhotoService {
 	 */
 	async getUserPhotos(options = {}) {
 		try {
-			const { userId, page = 1, perPage = 50, sort = "date-posted-desc" } = options;
+			const {
+				userId,
+				accessToken,
+				accessTokenSecret,
+				page = 1,
+				perPage = 50,
+				sort = "date-posted-desc",
+			} = options;
+
+			console.log("🔍 [PHOTO DEBUG] getUserPhotos called with:", {
+				userId,
+				hasAccessToken: !!accessToken,
+				hasAccessTokenSecret: !!accessTokenSecret,
+				accessTokenType: typeof accessToken,
+				accessTokenPrefix: accessToken?.substring(0, 10) + "...",
+				page,
+				perPage,
+				isDev: import.meta.env.DEV,
+			});
 
 			// DEV MODE: Return mock photos for testing
-			if (import.meta.env.DEV) {
+			if (import.meta.env.DEV && (!accessToken || accessToken.startsWith("mock_"))) {
+				console.log("🔄 [PHOTO DEBUG] Using mock photos (dev mode)");
 				return this.generateMockPhotos({ page, perPage });
 			}
 
-			// PRODUCTION: Make actual Flickr API call
-			const params = new URLSearchParams({
-				method: "flickr.people.getPhotos",
-				api_key: this.apiKey,
+			// Validate required parameters
+			if (!userId || !accessToken || !accessTokenSecret) {
+				throw new Error("Missing required parameters: userId, accessToken, or accessTokenSecret");
+			}
+
+			// PRODUCTION: Make actual Flickr API call with rate limiting
+			const apiParams = {
 				user_id: userId,
 				page: page.toString(),
 				per_page: perPage.toString(),
-				format: "json",
-				nojsoncallback: "1",
-				extras: "date_taken,date_upload,url_m,url_z,url_l,tags",
+				extras: "date_taken,date_upload,url_m,url_z,url_l,url_o,tags,machine_tags,views,media",
 				sort: sort,
+			};
+
+			const response = await rateLimiter.makeRequest(async () => {
+				return await this.apiClient.makeAuthenticatedRequest(
+					"flickr.people.getPhotos",
+					apiParams,
+					accessToken,
+					accessTokenSecret
+				);
 			});
 
-			const response = await fetch(`${this.baseUrl}?${params}`);
-
-			if (!response.ok) {
-				throw new Error(`Flickr API error: ${response.status} ${response.statusText}`);
+			if (!response.photos) {
+				throw new Error("Invalid API response structure");
 			}
 
-			const data = await response.json();
-
-			if (data.stat === "fail") {
-				throw new Error(`Flickr API error: ${data.message}`);
-			}
-
-			return this.normalizePhotosResponse(data.photos);
+			return this.normalizePhotosResponse(response.photos);
 		} catch (error) {
 			console.error("FlickrPhotoService: Error fetching photos:", error);
 			throw new Error(`Failed to fetch photos: ${error.message}`);
@@ -113,13 +139,29 @@ export class FlickrPhotoService {
 	normalizePhotosResponse(flickrPhotos) {
 		const photos = flickrPhotos.photo.map((photo) => ({
 			id: photo.id,
-			title: photo.title || `Photo ${photo.id}`,
-			url: photo.url_l || photo.url_z || photo.url_m,
-			thumbnailUrl: photo.url_m,
+			title: photo.title || `Untitled Photo ${photo.id}`,
+			url:
+				photo.url_o ||
+				photo.url_l ||
+				photo.url_z ||
+				photo.url_m ||
+				`https://live.staticflickr.com/${photo.server}/${photo.id}_${photo.secret}_b.jpg`,
+			thumbnailUrl:
+				photo.url_m ||
+				`https://live.staticflickr.com/${photo.server}/${photo.id}_${photo.secret}_m.jpg`,
 			dateUploaded: parseInt(photo.dateupload) * 1000, // Convert to milliseconds
 			dateTaken: photo.datetaken ? new Date(photo.datetaken).getTime() : null,
 			tags: photo.tags ? photo.tags.split(" ").filter(Boolean) : [],
+			machineTags: photo.machine_tags ? photo.machine_tags.split(" ").filter(Boolean) : [],
+			views: parseInt(photo.views) || 0,
+			media: photo.media || "photo",
 			status: "untagged", // Default status for new photos
+			// Store original photo data for deletion
+			_flickrData: {
+				server: photo.server,
+				secret: photo.secret,
+				farm: photo.farm,
+			},
 		}));
 
 		return {
@@ -145,24 +187,39 @@ export class FlickrPhotoService {
 	}
 
 	/**
-	 * Delete a photo from Flickr (placeholder for future implementation)
+	 * Delete a photo from Flickr
 	 * @param {string} photoId - Photo ID to delete
-	 * @param {string} AUTH_TOKEN - User's auth token
+	 * @param {string} accessToken - OAuth access token
+	 * @param {string} accessTokenSecret - OAuth access token secret
 	 * @returns {Promise<boolean>} Success status
 	 */
-	async deletePhoto(photoId, AUTH_TOKEN) {
+	async deletePhoto(photoId, accessToken, accessTokenSecret) {
 		try {
 			// DEV MODE: Simulate deletion
-			if (import.meta.env.DEV) {
+			if (import.meta.env.DEV && (!accessToken || accessToken.startsWith("mock_"))) {
 				console.log(`🗑️ [MOCK] Deleting photo ${photoId}`);
 				// Simulate API delay
 				await new Promise((resolve) => setTimeout(resolve, 500));
 				return Math.random() > 0.1; // 90% success rate for testing
 			}
 
-			// TODO: Implement actual Flickr photo deletion
-			// This requires OAuth 1.0a authentication and proper API call
-			throw new Error("Photo deletion not yet implemented");
+			// Validate required parameters
+			if (!photoId || !accessToken || !accessTokenSecret) {
+				throw new Error("Missing required parameters: photoId, accessToken, or accessTokenSecret");
+			}
+
+			// PRODUCTION: Make actual deletion API call with rate limiting
+			const response = await rateLimiter.makeRequest(async () => {
+				return await this.apiClient.makeAuthenticatedRequest(
+					"flickr.photos.delete",
+					{ photo_id: photoId },
+					accessToken,
+					accessTokenSecret
+				);
+			});
+
+			// Flickr returns success status in response
+			return response.stat === "ok";
 		} catch (error) {
 			console.error(`FlickrPhotoService: Error deleting photo ${photoId}:`, error);
 			throw error;
