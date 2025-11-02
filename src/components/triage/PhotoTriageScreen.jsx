@@ -501,6 +501,13 @@ export function PhotoTriageScreen() {
 						{currentPhoto && (
 							<div className="mt-4 text-sm text-gray-600">
 								<p className="font-medium">{currentPhoto.title}</p>
+								{currentPhoto.isPublic && (
+									<p className="mt-1">
+										<span className="inline-block px-2 py-0.5 text-xs font-semibold text-yellow-900 bg-yellow-300 rounded-md ring-1 ring-yellow-400/40">
+											Public
+										</span>
+									</p>
+								)}
 								{currentPhoto.dateUploaded && (
 									<p>Uploaded: {new Date(currentPhoto.dateUploaded).toLocaleDateString()}</p>
 								)}

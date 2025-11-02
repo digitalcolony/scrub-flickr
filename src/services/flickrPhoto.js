@@ -155,6 +155,10 @@ export class FlickrPhotoService {
 			machineTags: photo.machine_tags ? photo.machine_tags.split(" ").filter(Boolean) : [],
 			views: parseInt(photo.views) || 0,
 			media: photo.media || "photo",
+			// Visibility flags (from flickr.people.getPhotos)
+			isPublic: photo.ispublic === 1 || photo.ispublic === "1",
+			isFriend: photo.isfriend === 1 || photo.isfriend === "1",
+			isFamily: photo.isfamily === 1 || photo.isfamily === "1",
 			status: "untagged", // Default status for new photos
 			// Store original photo data for deletion
 			_flickrData: {
@@ -173,6 +177,47 @@ export class FlickrPhotoService {
 				total: parseInt(flickrPhotos.total),
 			},
 		};
+	}
+
+	/**
+	 * Fetch album/group contexts for a photo (albums = photosets)
+	 * @param {string} photoId
+	 * @param {string} accessToken
+	 * @param {string} accessTokenSecret
+	 * @returns {Promise<{sets: Array<{id:string,title:string}>, pools: Array<{id:string,title:string}>}>}
+	 */
+	async getPhotoContexts(photoId, accessToken, accessTokenSecret) {
+		try {
+			if (!photoId || !accessToken || !accessTokenSecret) {
+				throw new Error("Missing required parameters: photoId, accessToken, or accessTokenSecret");
+			}
+
+			// DEV MODE: return mock empty contexts
+			if (import.meta.env.DEV && (!accessToken || accessToken.startsWith("mock_"))) {
+				return { sets: [], pools: [] };
+			}
+
+			const response = await rateLimiter.makeRequest(async () => {
+				return await this.apiClient.makeAuthenticatedRequest(
+					"flickr.photos.getAllContexts",
+					{ photo_id: photoId },
+					accessToken,
+					accessTokenSecret
+				);
+			});
+
+			const sets = Array.isArray(response.set)
+				? response.set.map((s) => ({ id: s.id, title: s.title?._content || s.title || "" }))
+				: [];
+			const pools = Array.isArray(response.pool)
+				? response.pool.map((g) => ({ id: g.id, title: g.title?._content || g.title || "" }))
+				: [];
+
+			return { sets, pools };
+		} catch (error) {
+			console.error("FlickrPhotoService: Error fetching photo contexts:", error);
+			throw new Error(`Failed to fetch photo contexts: ${error.message}`);
+		}
 	}
 
 	/**
