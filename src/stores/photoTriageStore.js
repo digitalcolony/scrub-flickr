@@ -1,0 +1,290 @@
+import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
+import { flickrPhotoService } from "../services/flickrPhoto.js";
+
+/**
+ * Photo Triage Store - Manages photo loading, tagging, and triage workflow
+ * Uses Zustand with localStorage persistence for tag decisions
+ */
+export const usePhotoTriageStore = create(
+	persist(
+		(set, get) => ({
+			// Photo data
+			photos: [],
+			currentPhotoIndex: 0,
+			totalPhotos: 0,
+			hasMorePhotos: true,
+			isLoadingPhotos: false,
+			loadingError: null,
+
+			// Tagging data (persisted)
+			photoTags: {}, // { photoId: 'keep' | 'delete-pending' | 'delete-completed' | 'delete-failed' }
+			deleteErrors: {}, // { photoId: { error: string, attempts: number } }
+
+			// UI state
+			currentPage: 1,
+			photosPerPage: 50,
+
+			/**
+			 * Load initial batch of photos
+			 * @param {string} userId - Flickr user ID
+			 */
+			async loadPhotos(userId) {
+				const state = get();
+				if (state.isLoadingPhotos) return;
+
+				set({ isLoadingPhotos: true, loadingError: null });
+
+				try {
+					const response = await flickrPhotoService.getUserPhotos({
+						userId,
+						page: 1,
+						perPage: state.photosPerPage,
+					});
+
+					const untaggedPhotos = response.photos.filter((photo) => !state.photoTags[photo.id]);
+
+					set({
+						photos: response.photos,
+						totalPhotos: response.pagination.total,
+						hasMorePhotos: response.pagination.page < response.pagination.pages,
+						currentPhotoIndex: 0,
+						isLoadingPhotos: false,
+						currentPage: 1,
+					});
+
+					// If all photos are tagged, load more
+					if (untaggedPhotos.length === 0 && response.pagination.page < response.pagination.pages) {
+						get().loadMorePhotos(userId);
+					}
+				} catch (error) {
+					console.error("Error loading photos:", error);
+					set({
+						isLoadingPhotos: false,
+						loadingError: error.message,
+					});
+				}
+			},
+
+			/**
+			 * Load more photos from next page
+			 * @param {string} userId - Flickr user ID
+			 */
+			async loadMorePhotos(userId) {
+				const state = get();
+				if (state.isLoadingPhotos || !state.hasMorePhotos) return;
+
+				set({ isLoadingPhotos: true });
+
+				try {
+					const response = await flickrPhotoService.getUserPhotos({
+						userId,
+						page: state.currentPage + 1,
+						perPage: state.photosPerPage,
+					});
+
+					const allPhotos = [...state.photos, ...response.photos];
+
+					set({
+						photos: allPhotos,
+						hasMorePhotos: response.pagination.page < response.pagination.pages,
+						currentPage: response.pagination.page,
+						isLoadingPhotos: false,
+					});
+				} catch (error) {
+					console.error("Error loading more photos:", error);
+					set({
+						isLoadingPhotos: false,
+						loadingError: error.message,
+					});
+				}
+			},
+
+			/**
+			 * Get current photo for triage
+			 * @returns {Object|null} Current photo or null if none available
+			 */
+			getCurrentPhoto() {
+				const state = get();
+				const untaggedPhotos = state.photos.filter((photo) => !state.photoTags[photo.id]);
+
+				if (untaggedPhotos.length === 0) {
+					return null;
+				}
+
+				return untaggedPhotos[0];
+			},
+
+			/**
+			 * Tag a photo with keep/delete decision
+			 * @param {string} photoId - Photo ID
+			 * @param {string} tag - Tag value ('keep' | 'delete-pending')
+			 */
+			tagPhoto(photoId, tag) {
+				const state = get();
+
+				set({
+					photoTags: {
+						...state.photoTags,
+						[photoId]: tag,
+					},
+				});
+
+				// If we're running low on untagged photos, try to load more
+				const untaggedCount = state.photos.filter(
+					(photo) => !state.photoTags[photo.id] && photo.id !== photoId
+				).length;
+
+				if (untaggedCount < 5 && state.hasMorePhotos && !state.isLoadingPhotos) {
+					// We'll need the userId here - for now just log
+					console.log("Running low on photos, need to load more");
+				}
+			},
+
+			/**
+			 * Move to next photo (keyboard navigation)
+			 */
+			nextPhoto() {
+				const state = get();
+				const untaggedPhotos = state.photos.filter((photo) => !state.photoTags[photo.id]);
+
+				if (state.currentPhotoIndex < untaggedPhotos.length - 1) {
+					set({ currentPhotoIndex: state.currentPhotoIndex + 1 });
+				}
+			},
+
+			/**
+			 * Move to previous photo (keyboard navigation)
+			 */
+			previousPhoto() {
+				const state = get();
+				if (state.currentPhotoIndex > 0) {
+					set({ currentPhotoIndex: state.currentPhotoIndex - 1 });
+				}
+			},
+
+			/**
+			 * Get photos tagged for deletion
+			 * @returns {Array} Photos with delete-pending status
+			 */
+			getPhotosToDelete() {
+				const state = get();
+				return state.photos.filter((photo) => state.photoTags[photo.id] === "delete-pending");
+			},
+
+			/**
+			 * Get count of photos tagged for deletion (works without loaded photos)
+			 * @returns {number} Count of photos tagged for deletion
+			 */
+			getDeletedPhotoCount() {
+				const state = get();
+				return Object.values(state.photoTags).filter((tag) => tag === "delete-pending").length;
+			},
+
+			/**
+			 * Get photos tagged to keep
+			 * @returns {Array} Photos with keep status
+			 */
+			getPhotosToKeep() {
+				const state = get();
+				return state.photos.filter((photo) => state.photoTags[photo.id] === "keep");
+			},
+
+			/**
+			 * Get triage statistics
+			 * @returns {Object} Statistics about photo triage progress
+			 */
+			getTriageStats() {
+				const state = get();
+				const totalLoaded = state.photos.length;
+				const keepCount = Object.values(state.photoTags).filter((tag) => tag === "keep").length;
+				const deleteCount = Object.values(state.photoTags).filter((tag) =>
+					tag.startsWith("delete")
+				).length;
+				const untaggedCount = totalLoaded - keepCount - deleteCount;
+
+				return {
+					totalLoaded,
+					totalPhotos: state.totalPhotos,
+					keepCount,
+					deleteCount,
+					untaggedCount,
+					hasMorePhotos: state.hasMorePhotos,
+					progressPercent:
+						state.totalPhotos > 0
+							? Math.round(((keepCount + deleteCount) / state.totalPhotos) * 100)
+							: 0,
+				};
+			},
+
+			/**
+			 * Update photo tag status (for deletion flow)
+			 * @param {string} photoId - Photo ID
+			 * @param {string} status - New status
+			 * @param {Object} errorInfo - Error information if status is failed
+			 */
+			updatePhotoStatus(photoId, status, errorInfo = null) {
+				const state = get();
+
+				const newTags = { ...state.photoTags, [photoId]: status };
+				const newErrors = { ...state.deleteErrors };
+
+				if (status === "delete-failed" && errorInfo) {
+					newErrors[photoId] = errorInfo;
+				} else if (status !== "delete-failed") {
+					delete newErrors[photoId];
+				}
+
+				set({
+					photoTags: newTags,
+					deleteErrors: newErrors,
+				});
+			},
+
+			/**
+			 * Untag a photo (remove from delete queue)
+			 * @param {string} photoId - Photo ID to untag
+			 */
+			untagPhoto(photoId) {
+				const state = get();
+				const newTags = { ...state.photoTags };
+				const newErrors = { ...state.deleteErrors };
+
+				delete newTags[photoId];
+				delete newErrors[photoId];
+
+				set({
+					photoTags: newTags,
+					deleteErrors: newErrors,
+				});
+			},
+
+			/**
+			 * Reset all photo tags (start fresh)
+			 */
+			resetAllTags() {
+				set({
+					photoTags: {},
+					deleteErrors: {},
+					currentPhotoIndex: 0,
+				});
+			},
+
+			/**
+			 * Clear loading error
+			 */
+			clearError() {
+				set({ loadingError: null });
+			},
+		}),
+		{
+			name: "photo-triage-storage",
+			storage: createJSONStorage(() => localStorage),
+			// Only persist the tagging decisions, not the photo data
+			partialize: (state) => ({
+				photoTags: state.photoTags,
+				deleteErrors: state.deleteErrors,
+			}),
+		}
+	)
+);

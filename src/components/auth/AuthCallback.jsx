@@ -84,8 +84,23 @@ export function AuthCallback() {
 	useEffect(() => {
 		if (isAuthenticated()) {
 			const timer = setTimeout(() => {
-				navigate("/", { replace: true });
-			}, 2000); // 2 second delay to show success message
+				// Try multiple navigation methods for maximum reliability
+				try {
+					// Method 1: React Router navigate
+					navigate("/", { replace: true });
+
+					// Method 2: Fallback to window.location if navigate doesn't work
+					setTimeout(() => {
+						if (window.location.pathname === "/auth/callback") {
+							window.location.href = "/";
+						}
+					}, 500);
+				} catch (error) {
+					// Method 3: Direct window.location as last resort
+					console.warn("Navigation failed, using window.location:", error);
+					window.location.href = "/";
+				}
+			}, 1500); // Reduced from 2000ms to 1500ms
 
 			return () => clearTimeout(timer);
 		}
@@ -126,14 +141,29 @@ export function AuthCallback() {
 					</div>
 					<h2 className="text-xl font-semibold text-gray-800 mb-2">Authentication successful!</h2>
 					<p className="text-gray-600 mb-4">
-						You're now connected to Flickr. Redirecting to the app...
+						You're now connected to Flickr. Redirecting automatically...
 					</p>
-					<div className="w-full bg-gray-200 rounded-full h-2">
+					<div className="w-full bg-gray-200 rounded-full h-2 mb-4">
 						<div
 							className="bg-blue-600 h-2 rounded-full animate-pulse"
 							style={{ width: "100%" }}
 						></div>
 					</div>
+
+					{/* Manual continue button as fallback */}
+					<button
+						onClick={() => {
+							try {
+								navigate("/", { replace: true });
+							} catch {
+								window.location.href = "/";
+							}
+						}}
+						className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+					>
+						Continue to App
+					</button>
+					<p className="text-xs text-gray-500 mt-2">Not redirecting? Click the button above.</p>
 				</div>
 			</div>
 		);

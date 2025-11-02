@@ -1,6 +1,8 @@
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import { useAuthStore } from "./stores/authStore.js";
 import { AuthCallback } from "./components/auth/AuthCallback.jsx";
+import { PhotoTriageScreen } from "./components/triage/PhotoTriageScreen.jsx";
+import { DeleteQueueScreen } from "./components/triage/DeleteQueueScreen.jsx";
 
 function HomePage() {
 	const { isAuthenticated, user, startAuth, logout, isLoading, error } = useAuthStore();
@@ -31,13 +33,21 @@ function HomePage() {
 								Welcome back, {user?.username}!
 							</h2>
 							<p className="text-gray-600 mb-6">You're successfully connected to Flickr.</p>
-							<button
-								onClick={logout}
-								disabled={isLoading}
-								className="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50"
-							>
-								{isLoading ? "Disconnecting..." : "Disconnect from Flickr"}
-							</button>
+							<div className="space-x-4">
+								<button
+									onClick={() => (window.location.href = "/triage")}
+									className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+								>
+									Start Photo Triage
+								</button>
+								<button
+									onClick={logout}
+									disabled={isLoading}
+									className="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50"
+								>
+									{isLoading ? "Disconnecting..." : "Disconnect from Flickr"}
+								</button>
+							</div>
 						</div>
 					) : (
 						<div>
@@ -79,6 +89,8 @@ function App() {
 			<Routes>
 				<Route path="/" element={<HomePage />} />
 				<Route path="/auth/callback" element={<AuthCallback />} />
+				<Route path="/triage" element={<PhotoTriageScreen />} />
+				<Route path="/delete-queue" element={<DeleteQueueScreen />} />
 			</Routes>
 		</Router>
 	);
