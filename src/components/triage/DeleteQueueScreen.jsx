@@ -26,6 +26,8 @@ export function DeleteQueueScreen() {
 	const [attemptedReload, setAttemptedReload] = useState(false);
 	const [didStartDeletion, setDidStartDeletion] = useState(false);
 	const [didAutoRedirect, setDidAutoRedirect] = useState(false);
+	const [reconcileAttempts, setReconcileAttempts] = useState(0);
+	const MAX_RECONCILE_ATTEMPTS = 5;
 
 	const photosToDelete = getPhotosToDelete();
 	const deletedPhotoCount = getDeletedPhotoCount();
@@ -72,6 +74,31 @@ export function DeleteQueueScreen() {
 		loadPhotos,
 		loadMorePhotos,
 		attemptedReload,
+	]);
+
+	// If some queued items are not yet visible, try to reconcile by fetching more pages (bounded attempts)
+	useEffect(() => {
+		if (!user || !token) return;
+		if (isLoadingPhotos) return;
+		const visible = photosToDelete.length;
+		const global = deletedPhotoCount;
+		if (visible < global && hasMorePhotos && reconcileAttempts < MAX_RECONCILE_ATTEMPTS) {
+			setReconcileAttempts((n) => n + 1);
+			loadMorePhotos(user.userId, token);
+		}
+		// Reset attempts when reconciled or cleared
+		if ((visible === global && global !== 0) || visible === 0) {
+			if (reconcileAttempts !== 0) setReconcileAttempts(0);
+		}
+	}, [
+		user,
+		token,
+		isLoadingPhotos,
+		photosToDelete.length,
+		deletedPhotoCount,
+		hasMorePhotos,
+		reconcileAttempts,
+		loadMorePhotos,
 	]);
 
 	const handleRemoveFromQueue = (photoId) => {
@@ -145,6 +172,8 @@ export function DeleteQueueScreen() {
 									? "Loading queued photos…"
 									: isDeleting
 									? `Deleting ${deletionProgress.current}/${deletionProgress.total}...`
+									: deletedPhotoCount > photosToDelete.length
+									? `Showing ${photosToDelete.length} of ${deletedPhotoCount} queued`
 									: `${photosToDelete.length} photos tagged for deletion`}
 							</span>
 							{photosToDelete.length > 0 && !isDeleting && (
